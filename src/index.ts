@@ -2,12 +2,22 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { MiraeAssetBroker } from "./brokers/miraeasset/adapter.js";
+import { NhSecBroker } from "./brokers/nhsec/adapter.js";
 import { SamsungPopBroker } from "./brokers/samsungpop/adapter.js";
 import { ShinhanSecBroker } from "./brokers/shinhansec/adapter.js";
 import { loadConfig } from "./config.js";
 import { createBrokerRegistry, getBrokerOrThrow } from "./brokers/registry.js";
 import { getErrorMessage } from "./lib/errors.js";
 import {
+  normalizeMiraeAssetAccounts,
+  normalizeMiraeAssetAssetSummary,
+  normalizeMiraeAssetHoldings,
+  normalizeMiraeAssetTransactions,
+  normalizeNhSecAccounts,
+  normalizeNhSecAssetSummary,
+  normalizeNhSecHoldings,
+  normalizeNhSecTransactions,
   normalizeSamsungAccounts,
   normalizeSamsungAssetSummary,
   normalizeSamsungHoldings,
@@ -22,7 +32,7 @@ import type { BrokerId } from "./types.js";
 const config = loadConfig();
 const registry = createBrokerRegistry(config);
 
-const brokerIdSchema = z.enum(["samsungpop", "shinhansec"]);
+const brokerIdSchema = z.enum(["samsungpop", "shinhansec", "miraeasset", "nhsec"]);
 const shinhanFinancialTransactionCategorySchema = z.enum([
   "fund",
   "els_dls",
@@ -63,6 +73,26 @@ function getShinhanSecBroker(): ShinhanSecBroker {
   return broker;
 }
 
+function getMiraeAssetBroker(): MiraeAssetBroker {
+  const broker = getBrokerOrThrow(registry, "miraeasset");
+
+  if (!(broker instanceof MiraeAssetBroker)) {
+    throw new Error("미래에셋증권 브로커 인스턴스를 확인하지 못했습니다.");
+  }
+
+  return broker;
+}
+
+function getNhSecBroker(): NhSecBroker {
+  const broker = getBrokerOrThrow(registry, "nhsec");
+
+  if (!(broker instanceof NhSecBroker)) {
+    throw new Error("NH투자증권 브로커 인스턴스를 확인하지 못했습니다.");
+  }
+
+  return broker;
+}
+
 const server = new McpServer(
   {
     name: "my-stock-mcp",
@@ -70,7 +100,7 @@ const server = new McpServer(
   },
   {
     instructions:
-      "한국 증권사 웹사이트에서 자산/계좌 정보를 읽는 로컬 MCP 서버입니다. 먼저 list_brokers 또는 get_broker_auth_status 로 인증 상태를 확인한 뒤, 필요하면 setup_samsungpop_session 으로 로그인 세션을 준비하고 get_asset_snapshot 을 호출하세요.",
+      "한국 증권사 웹사이트에서 자산/계좌 정보를 읽는 로컬 MCP 서버입니다. 먼저 list_brokers 또는 get_broker_auth_status 로 인증 상태를 확인한 뒤, 필요하면 증권사별 setup_*_session 도구로 로그인 세션을 준비하고 get_asset_snapshot 을 호출하세요.",
   },
 );
 
@@ -182,11 +212,45 @@ server.registerTool(
 );
 
 server.registerTool(
+  "setup_miraeasset_session",
+  {
+    title: "Setup Mirae Asset Securities Session",
+    description:
+      "브라우저를 열고 미래에셋증권 수동 로그인을 기다린 뒤, 재사용 가능한 세션을 저장합니다.",
+  },
+  async () => {
+    try {
+      const broker = getBrokerOrThrow(registry, "miraeasset");
+      return toToolResult(await broker.setupManualSession());
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "setup_nhsec_session",
+  {
+    title: "Setup NH Securities Session",
+    description:
+      "브라우저를 열고 NH투자증권 수동 로그인을 기다린 뒤, 재사용 가능한 세션을 저장합니다.",
+  },
+  async () => {
+    try {
+      const broker = getBrokerOrThrow(registry, "nhsec");
+      return toToolResult(await broker.setupManualSession());
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
   "get_asset_snapshot",
   {
     title: "Get Asset Snapshot",
     description:
-      "증권사 자산 화면에서 범용 요약 데이터를 읽습니다. 현재는 삼성증권/신한투자증권을 지원합니다.",
+      "증권사 자산 화면에서 범용 요약 데이터를 읽습니다. 삼성증권/신한투자증권/미래에셋증권/NH투자증권을 지원합니다.",
     inputSchema: z.object({
       brokerId: brokerIdSchema,
       forceRefresh: z.boolean().optional().default(false),
@@ -239,7 +303,11 @@ server.registerTool(
         normalized:
           brokerId === "samsungpop"
             ? normalizeSamsungAssetSummary(snapshot)
-            : normalizeShinhanAssetSummary(snapshot),
+            : brokerId === "shinhansec"
+              ? normalizeShinhanAssetSummary(snapshot)
+              : brokerId === "miraeasset"
+                ? normalizeMiraeAssetAssetSummary(snapshot)
+                : normalizeNhSecAssetSummary(snapshot),
       });
     } catch (error) {
       return toToolError(error);
@@ -270,6 +338,45 @@ server.registerTool(
           ...(headless !== undefined ? { headless } : {}),
         });
         const accounts = normalizeSamsungAccounts(snapshot);
+
+        return toToolResult({
+          brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          count: accounts.length,
+          accounts,
+        });
+      }
+
+      if (brokerId === "miraeasset") {
+        const broker = getMiraeAssetBroker();
+        const snapshot = await broker.fetchAccountsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const accounts = normalizeMiraeAssetAccounts(snapshot);
+
+        return toToolResult({
+          brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          count: accounts.length,
+          accounts,
+          rawPageTitle: snapshot.pageTitle,
+          rawPageUrl: snapshot.pageUrl,
+        });
+      }
+
+      if (brokerId === "nhsec") {
+        const broker = getNhSecBroker();
+        const snapshot = await broker.fetchBalances({
+          allAccounts: true,
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const accounts = normalizeNhSecAccounts(snapshot);
 
         return toToolResult({
           brokerId,
@@ -340,6 +447,56 @@ server.registerTool(
           categories: Array.from(new Set(holdings.map((item) => item.category))),
           byCategory: countBy(holdings.map((item) => item.category)),
           holdings,
+        });
+      }
+
+      if (brokerId === "miraeasset") {
+        const broker = getMiraeAssetBroker();
+        const accountsPage = await broker.fetchAccountsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const holdings = normalizeMiraeAssetHoldings(accountsPage);
+
+        return toToolResult({
+          brokerId,
+          brokerName: accountsPage.brokerName,
+          capturedAt: accountsPage.capturedAt,
+          count: holdings.length,
+          categories: Array.from(new Set(holdings.map((item) => item.category))),
+          byCategory: countBy(holdings.map((item) => item.category)),
+          holdings,
+          rawPageTitle: accountsPage.pageTitle,
+          rawPageUrl: accountsPage.pageUrl,
+        });
+      }
+
+      if (brokerId === "nhsec") {
+        const broker = getNhSecBroker();
+        const snapshot = await broker.fetchBalances({
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts: allAccounts || !accountNumber,
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const holdings = normalizeNhSecHoldings(snapshot);
+        const filteredHoldings = accountNumber
+          ? holdings.filter((item) => item.accountNumber === accountNumber)
+          : holdings;
+
+        return toToolResult({
+          brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          ...(accountNumber ? { requestedAccountNumber: accountNumber } : {}),
+          count: filteredHoldings.length,
+          categories: Array.from(
+            new Set(filteredHoldings.map((item) => item.category)),
+          ),
+          byCategory: countBy(filteredHoldings.map((item) => item.category)),
+          holdings: filteredHoldings,
         });
       }
 
@@ -437,6 +594,80 @@ server.registerTool(
               .flatMap((item) => (item.direction ? [item.direction] : [])),
           ),
           transactions,
+        });
+      }
+
+      if (brokerId === "miraeasset") {
+        const broker = getMiraeAssetBroker();
+        const snapshot = await broker.fetchTransactionsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const transactions = normalizeMiraeAssetTransactions(snapshot);
+
+        return toToolResult({
+          brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          ...(startDate ? { requestedStartDate: startDate } : {}),
+          ...(endDate ? { requestedEndDate: endDate } : {}),
+          sourceTypes: ["broker_specific"],
+          count: transactions.length,
+          bySourceType: countBy(transactions.map((item) => item.sourceType)),
+          byKind: countBy(
+            transactions.flatMap((item) => (item.kind ? [item.kind] : [])),
+          ),
+          byDirection: countBy(
+            transactions.flatMap((item) =>
+              item.direction ? [item.direction] : [],
+            ),
+          ),
+          transactions,
+          rawPageTitle: snapshot.pageTitle,
+          rawPageUrl: snapshot.pageUrl,
+        });
+      }
+
+      if (brokerId === "nhsec") {
+        const broker = getNhSecBroker();
+        const snapshot = await broker.fetchTransactions({
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts: allAccounts || !accountNumber,
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const transactions = normalizeNhSecTransactions(snapshot);
+        const filteredTransactions = accountNumber
+          ? transactions.filter((item) => item.accountNumber === accountNumber)
+          : transactions;
+
+        return toToolResult({
+          brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          ...(accountNumber ? { requestedAccountNumber: accountNumber } : {}),
+          ...(startDate ? { requestedStartDate: startDate } : {}),
+          ...(endDate ? { requestedEndDate: endDate } : {}),
+          sourceTypes: ["broker_specific"],
+          count: filteredTransactions.length,
+          bySourceType: countBy(
+            filteredTransactions.map((item) => item.sourceType),
+          ),
+          byKind: countBy(
+            filteredTransactions.flatMap((item) =>
+              item.kind ? [item.kind] : [],
+            ),
+          ),
+          byDirection: countBy(
+            filteredTransactions.flatMap((item) =>
+              item.direction ? [item.direction] : [],
+            ),
+          ),
+          transactions: filteredTransactions,
         });
       }
 
@@ -1765,6 +1996,725 @@ server.registerTool(
         await broker.fetchDeepSnapshot({
           ...(startDate ? { startDate } : {}),
           ...(endDate ? { endDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_miraeasset_accounts",
+  {
+    title: "Get Mirae Asset Securities Accounts",
+    description:
+      "미래에셋증권 계좌별자산 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getMiraeAssetBroker();
+      return toToolResult(
+        await broker.fetchAccountsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_miraeasset_product_assets",
+  {
+    title: "Get Mirae Asset Securities Product Assets",
+    description:
+      "미래에셋증권 상품별자산 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getMiraeAssetBroker();
+      return toToolResult(
+        await broker.fetchProductAssetsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_miraeasset_transactions",
+  {
+    title: "Get Mirae Asset Securities Transactions",
+    description:
+      "미래에셋증권 거래내역 페이지를 읽고 원본 스냅샷을 반환합니다. 현재는 페이지 구조 기반 범용 추출입니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getMiraeAssetBroker();
+      return toToolResult(
+        await broker.fetchTransactionsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_miraeasset_investment_return",
+  {
+    title: "Get Mirae Asset Securities Investment Return",
+    description:
+      "미래에셋증권 투자수익률 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getMiraeAssetBroker();
+      return toToolResult(
+        await broker.fetchInvestmentReturnPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_miraeasset_deep_snapshot",
+  {
+    title: "Get Mirae Asset Securities Deep Snapshot",
+    description:
+      "미래에셋증권 MY자산, 계좌별자산, 상품별자산, 거래내역, 투자수익률 페이지를 한 번에 수집합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getMiraeAssetBroker();
+      return toToolResult(
+        await broker.fetchDeepSnapshot({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_accounts",
+  {
+    title: "Get NH Securities Accounts",
+    description: "NH투자증권 계좌 목록과 계좌 유형을 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchAccounts({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_balance_details",
+  {
+    title: "Get NH Securities Balance Details",
+    description:
+      "NH투자증권 종합잔고를 계좌별 요약과 보유종목까지 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      inquiryDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({
+    accountNumber,
+    allAccounts,
+    inquiryDate,
+    debug,
+    forceRefresh,
+    headless,
+  }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchBalances({
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts,
+          ...(inquiryDate ? { inquiryDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_holdings",
+  {
+    title: "Get NH Securities Holdings",
+    description:
+      "NH투자증권 종합잔고 기반 보유종목을 계좌번호/종목코드/매입가/평가금액/손익까지 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      inquiryDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({
+    accountNumber,
+    allAccounts,
+    inquiryDate,
+    debug,
+    forceRefresh,
+    headless,
+  }) => {
+    try {
+      const broker = getNhSecBroker();
+      const snapshot = await broker.fetchBalances({
+        ...(accountNumber ? { accountNumber } : {}),
+        allAccounts,
+        ...(inquiryDate ? { inquiryDate } : {}),
+        debug,
+        forceRefresh,
+        ...(headless !== undefined ? { headless } : {}),
+      });
+
+      return toToolResult({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        ...(snapshot.requestedAccountNumber
+          ? { requestedAccountNumber: snapshot.requestedAccountNumber }
+          : {}),
+        availableAccounts: snapshot.availableAccounts,
+        count: snapshot.holdings.length,
+        holdings: snapshot.holdings,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_balance_category",
+  {
+    title: "Get NH Securities Balance Category",
+    description:
+      "NH투자증권 자산 세부 탭(주식/펀드/RP/채권/연금/발행어음/IMA 등)을 카테고리별로 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      category: z.enum([
+        "stock",
+        "fund",
+        "els_dls",
+        "rp",
+        "mmw",
+        "bond",
+        "cd",
+        "cp",
+        "pension",
+        "retirement",
+        "issued_note",
+        "usd_issued_note",
+        "ima",
+      ]),
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      inquiryDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({
+    category,
+    accountNumber,
+    allAccounts,
+    inquiryDate,
+    debug,
+    forceRefresh,
+    headless,
+  }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchDetailedBalance(category, {
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts,
+          ...(inquiryDate ? { inquiryDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_transactions_structured",
+  {
+    title: "Get NH Securities Structured Transactions",
+    description:
+      "NH투자증권 종합거래내역을 계좌별로 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({
+    accountNumber,
+    allAccounts,
+    startDate,
+    endDate,
+    debug,
+    forceRefresh,
+    headless,
+  }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchTransactions({
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts,
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_transaction_category",
+  {
+    title: "Get NH Securities Transaction Category",
+    description:
+      "NH투자증권 펀드/Wrap/MMW/RP 거래내역을 카테고리별로 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      category: z.enum(["fund", "wrap", "mmw", "rp"]),
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({
+    category,
+    accountNumber,
+    allAccounts,
+    startDate,
+    endDate,
+    debug,
+    forceRefresh,
+    headless,
+  }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchCategorizedTransactions(category, {
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts,
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_special_assets",
+  {
+    title: "Get NH Securities Special Assets",
+    description:
+      "NH투자증권 신탁/Wrap/해외뮤추얼펀드 잔고를 카테고리별로 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      category: z.enum(["trust", "wrap", "foreign_mutual_fund"]),
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      inquiryDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({
+    category,
+    accountNumber,
+    allAccounts,
+    inquiryDate,
+    debug,
+    forceRefresh,
+    headless,
+  }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchSpecialAssets(category, {
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts,
+          ...(inquiryDate ? { inquiryDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_cash_transactions",
+  {
+    title: "Get NH Securities Cash Transactions",
+    description:
+      "NH투자증권 입출금내역을 계좌별로 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({
+    accountNumber,
+    allAccounts,
+    startDate,
+    endDate,
+    debug,
+    forceRefresh,
+    headless,
+  }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchCashTransactions({
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts,
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_foreign_assets",
+  {
+    title: "Get NH Securities Foreign Assets",
+    description:
+      "NH투자증권 해외증권잔고를 외화잔고와 해외주식 보유내역으로 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      accountNumber: z.string().optional(),
+      allAccounts: z.boolean().optional().default(true),
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ accountNumber, allAccounts, debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchForeignAssets({
+          ...(accountNumber ? { accountNumber } : {}),
+          allAccounts,
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_my_asset",
+  {
+    title: "Get NH Securities My Asset",
+    description: "NH투자증권 My자산 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchMyAssetPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_general_balance",
+  {
+    title: "Get NH Securities General Balance",
+    description: "NH투자증권 종합잔고 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchGeneralBalancePage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_total_transactions",
+  {
+    title: "Get NH Securities Total Transactions",
+    description:
+      "NH투자증권 종합거래내역 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchTotalTransactionsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_deposit_withdrawals",
+  {
+    title: "Get NH Securities Deposit Withdrawals",
+    description:
+      "NH투자증권 입출금내역 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchDepositWithdrawalPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_foreign_balance",
+  {
+    title: "Get NH Securities Foreign Balance",
+    description:
+      "NH투자증권 해외증권잔고 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchForeignBalancePage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_foreign_transactions",
+  {
+    title: "Get NH Securities Foreign Transactions",
+    description:
+      "NH투자증권 해외주식거래내역 페이지를 읽고 원본 스냅샷을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchForeignTransactionsPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_nhsec_deep_snapshot",
+  {
+    title: "Get NH Securities Deep Snapshot",
+    description:
+      "NH투자증권 My자산, 종합잔고, 종합거래내역, 입출금내역, 해외증권잔고, 해외주식거래내역 페이지를 한 번에 수집합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchDeepSnapshot({
           debug,
           forceRefresh,
           ...(headless !== undefined ? { headless } : {}),

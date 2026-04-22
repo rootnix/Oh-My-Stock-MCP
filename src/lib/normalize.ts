@@ -1,5 +1,9 @@
 import type {
   BrokerAssetSnapshot,
+  MiraeAssetPageSnapshot,
+  NhSecBalancesSnapshot,
+  NhSecForeignAssetsSnapshot,
+  NhSecTransactionsSnapshot,
   NormalizedAccount,
   NormalizedAccountBreakdown,
   NormalizedAssetSummary,
@@ -140,6 +144,580 @@ function normalizeTransactionKind(value?: string): NormalizedTransactionKind | u
     default:
       return undefined;
   }
+}
+
+function rowToRecord(headers: string[], row: string[]): Record<string, string> {
+  return Object.fromEntries(
+    headers.map((header, index) => [header.trim(), row[index]?.trim() ?? ""]),
+  );
+}
+
+function findRecordValue(
+  record: Record<string, string>,
+  candidates: string[],
+): string | undefined {
+  for (const candidate of candidates) {
+    const match = Object.entries(record).find(([key]) => key.includes(candidate));
+
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return undefined;
+}
+
+function findAccountLikeValue(record: Record<string, string>): string | undefined {
+  const direct = findRecordValue(record, [
+    "계좌번호",
+    "계좌",
+    "계좌명",
+    "상품계좌",
+    "종합계좌",
+  ]);
+
+  if (direct && /\d/u.test(direct)) {
+    return direct;
+  }
+
+  return Object.values(record).find((value) =>
+    /^\d[\d-]{5,}$/u.test(value.replace(/\s+/gu, "")),
+  );
+}
+
+function inferMiraeHoldingCategory(input?: string): NormalizedHoldingCategory {
+  const text = (input ?? "").toLowerCase();
+
+  if (text.includes("예수금")) {
+    return "cash";
+  }
+  if (text.includes("cma") || text.includes("rp")) {
+    return "cma";
+  }
+  if (text.includes("퇴직") || text.includes("연금")) {
+    return "retirement";
+  }
+  if (text.includes("펀드")) {
+    return "fund";
+  }
+  if (text.includes("외화") || text.includes("해외")) {
+    return "foreign_stock";
+  }
+  if (text.includes("달러") || text.includes("usd")) {
+    return "foreign_stock";
+  }
+  if (text.includes("주식")) {
+    return "domestic_stock";
+  }
+  if (
+    text.includes("채권") ||
+    text.includes("신탁") ||
+    text.includes("els") ||
+    text.includes("dls") ||
+    text.includes("파생") ||
+    text.includes("방카") ||
+    text.includes("디지털증권")
+  ) {
+    return "financial_product";
+  }
+
+  return "unknown";
+}
+
+function inferTransactionKindFromText(
+  value?: string,
+): NormalizedTransactionKind | undefined {
+  const text = value?.toLowerCase() ?? "";
+
+  if (!text) {
+    return undefined;
+  }
+  if (text.includes("매수")) {
+    return "buy";
+  }
+  if (text.includes("매도")) {
+    return "sell";
+  }
+  if (text.includes("입금")) {
+    return "deposit";
+  }
+  if (text.includes("출금")) {
+    return "withdrawal";
+  }
+  if (text.includes("배당")) {
+    return "dividend";
+  }
+  if (text.includes("이자")) {
+    return "interest";
+  }
+  if (text.includes("수수료")) {
+    return "fee";
+  }
+  if (text.includes("세금") || text.includes("제세")) {
+    return "tax";
+  }
+  if (text.includes("환전")) {
+    return "exchange";
+  }
+  if (text.includes("이체") || text.includes("대체")) {
+    return "transfer";
+  }
+
+  return undefined;
+}
+
+function inferGenericHoldingCategory(input?: string): NormalizedHoldingCategory {
+  return inferMiraeHoldingCategory(input);
+}
+
+export function normalizeMiraeAssetAssetSummary(
+  snapshot: BrokerAssetSnapshot,
+): NormalizedAssetSummary {
+  const summary = snapshot.miraeassetAssetAnalysis;
+
+  return {
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    pageTitle: snapshot.pageTitle,
+    pageUrl: snapshot.pageUrl,
+    ...(summary?.ownerName ? { ownerName: summary.ownerName } : {}),
+    ...(summary?.standardDate ? { standardDate: summary.standardDate } : {}),
+    ...(summary?.totalAsset ? { totalAssetRaw: summary.totalAsset } : {}),
+    ...withParsedNumber("totalAssetValue", summary?.totalAsset),
+    ...(summary?.profitLoss ? { profitLossRaw: summary.profitLoss } : {}),
+    ...withParsedNumber("profitLossValue", summary?.profitLoss),
+    ...(summary?.returnRate ? { returnRateRaw: summary.returnRate } : {}),
+    ...withParsedNumber("returnRateValue", summary?.returnRate),
+  };
+}
+
+export function normalizeMiraeAssetAccounts(
+  snapshot: MiraeAssetPageSnapshot,
+): NormalizedAccount[] {
+  const accounts = new Map<string, NormalizedAccount>();
+
+  for (const table of snapshot.tables) {
+    const headerText = table.headers.join(" ");
+    const tableTitle = `${table.title ?? ""} ${headerText}`;
+
+    if (!/계좌/u.test(tableTitle)) {
+      continue;
+    }
+
+    for (const row of table.rows) {
+      const accountAliasIndex = table.headers.findIndex((header) =>
+        header.includes("계좌별명"),
+      );
+      const normalizedRow =
+        accountAliasIndex >= 0 && row.length === table.headers.length - 1
+          ? [
+              ...row.slice(0, accountAliasIndex),
+              "",
+              ...row.slice(accountAliasIndex),
+            ]
+          : row;
+      const record = rowToRecord(table.headers, normalizedRow);
+      const accountNumber = findAccountLikeValue(record);
+      const accountType = findRecordValue(record, [
+        "계좌유형",
+        "계좌구분",
+        "상품구분",
+        "상품명",
+        "유형",
+      ]);
+      const totalAsset = findRecordValue(record, [
+        "총자산",
+        "평가금액",
+        "순자산",
+        "자산",
+      ]);
+      const withdrawableAmount = findRecordValue(record, [
+        "출금가능",
+        "인출가능",
+        "가능금액",
+      ]);
+
+      if (!accountNumber) {
+        continue;
+      }
+
+      accounts.set(accountNumber, {
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        accountNumber,
+        displayAccountNumber: accountNumber,
+        ...(accountType ? { accountType } : {}),
+        ...(totalAsset ? { totalAssetRaw: totalAsset } : {}),
+        ...withParsedNumber("totalAssetValue", totalAsset),
+        ...(withdrawableAmount
+          ? { withdrawableAmountRaw: withdrawableAmount }
+          : {}),
+        ...withParsedNumber("withdrawableAmountValue", withdrawableAmount),
+        raw: record,
+      });
+    }
+  }
+
+  return Array.from(accounts.values());
+}
+
+export function normalizeMiraeAssetHoldings(
+  snapshot: MiraeAssetPageSnapshot,
+): NormalizedHolding[] {
+  const holdings: NormalizedHolding[] = [];
+
+  for (const table of snapshot.tables) {
+    const headerText = table.headers.join(" ");
+    const contextText = `${table.title ?? ""} ${headerText}`;
+    const looksLikeHoldingTable =
+      /종목|상품|잔고|보유|수량|평가/u.test(contextText) &&
+      !/거래/u.test(contextText);
+
+    if (!looksLikeHoldingTable) {
+      continue;
+    }
+
+    for (const row of table.rows) {
+      const record = rowToRecord(table.headers, row);
+      const productName =
+        findRecordValue(record, ["종목명", "상품명", "명칭", "펀드명"]) ??
+        Object.values(record).find((value) => /[가-힣A-Za-z]/u.test(value));
+
+      if (!productName) {
+        continue;
+      }
+
+      const accountNumber =
+        findAccountLikeValue(record) ??
+        snapshot.rawTextPreview.match(/\[(\d{3}-\d{4}-\d{4}-\d)\]/u)?.[1] ??
+        snapshot.rawTextPreview.match(/(\d{3}-\d{4}-\d{4}-\d)/u)?.[1] ??
+        "unknown";
+      const purchaseAmount = findRecordValue(record, [
+        "매입금액",
+        "매수금액",
+        "원금",
+        "취득금액",
+      ]);
+      const evaluationAmount = findRecordValue(record, [
+        "평가금액",
+        "현재가치",
+        "평가액",
+      ]);
+      const profitLoss = findRecordValue(record, ["손익", "평가손익"]);
+      const returnRate = findRecordValue(record, ["수익률"]);
+      const purchasePrice = findRecordValue(record, ["매입단가", "평균단가", "매수가"]);
+      const currentPrice = findRecordValue(record, ["현재가", "기준가"]);
+      const quantity = findRecordValue(record, ["수량", "잔고수량", "보유수량", "좌수"]);
+      const weight = findRecordValue(record, ["비중"]);
+      const productCode = findRecordValue(record, ["종목코드", "상품코드", "코드"]);
+      const category = inferMiraeHoldingCategory(
+        `${contextText} ${productName ?? ""} ${productCode ?? ""}`,
+      );
+
+      holdings.push({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        accountNumber,
+        displayAccountNumber: accountNumber,
+        category,
+        ...(productName ? { productName } : {}),
+        ...(productCode ? { productCode } : {}),
+        ...(quantity ? { quantityRaw: quantity } : {}),
+        ...withParsedNumber("quantityValue", quantity),
+        ...(purchasePrice ? { purchasePriceRaw: purchasePrice } : {}),
+        ...withParsedNumber("purchasePriceValue", purchasePrice),
+        ...(currentPrice ? { currentPriceRaw: currentPrice } : {}),
+        ...withParsedNumber("currentPriceValue", currentPrice),
+        ...(purchaseAmount ? { purchaseAmountRaw: purchaseAmount } : {}),
+        ...withParsedNumber("purchaseAmountValue", purchaseAmount),
+        ...(evaluationAmount ? { evaluationAmountRaw: evaluationAmount } : {}),
+        ...withParsedNumber("evaluationAmountValue", evaluationAmount),
+        ...(profitLoss ? { profitLossRaw: profitLoss } : {}),
+        ...withParsedNumber("profitLossValue", profitLoss),
+        ...(returnRate ? { returnRateRaw: returnRate } : {}),
+        ...withParsedNumber("returnRateValue", returnRate),
+        ...(weight ? { weightRaw: weight } : {}),
+        ...withParsedNumber("weightValue", weight),
+        raw: {
+          tableTitle: table.title,
+          ...record,
+        },
+      });
+    }
+  }
+
+  return holdings;
+}
+
+export function normalizeMiraeAssetTransactions(
+  snapshot: MiraeAssetPageSnapshot,
+): NormalizedTransaction[] {
+  const transactions: NormalizedTransaction[] = [];
+
+  for (const table of snapshot.tables) {
+    const headerText = table.headers.join(" ");
+    const contextText = `${table.title ?? ""} ${headerText}`;
+
+    if (!/거래|체결|이체|입출금/u.test(contextText)) {
+      continue;
+    }
+
+    for (const row of table.rows) {
+      const record = rowToRecord(table.headers, row);
+      const accountNumber = findAccountLikeValue(record) ?? "unknown";
+      const label =
+        findRecordValue(record, ["거래내용", "적요", "거래구분", "구분", "내용"]) ??
+        findRecordValue(record, ["종목명", "상품명"]);
+      const productName = findRecordValue(record, ["종목명", "상품명", "펀드명"]);
+      const amount = findRecordValue(record, [
+        "거래금액",
+        "금액",
+        "체결금액",
+        "출금액",
+        "입금액",
+      ]);
+      const settlementAmount = findRecordValue(record, ["정산금액", "결제금액"]);
+      const fee = findRecordValue(record, ["수수료"]);
+      const tax = findRecordValue(record, ["세금", "제세금"]);
+      const quantity = findRecordValue(record, ["수량", "체결수량"]);
+      const unitPrice = findRecordValue(record, ["단가", "체결단가", "가격"]);
+      const transactionDate = findRecordValue(record, ["거래일", "일자", "체결일"]);
+      const settlementDate = findRecordValue(record, ["결제일"]);
+      const productCode = findRecordValue(record, ["종목코드", "상품코드", "코드"]);
+      const kind = normalizeTransactionKind(
+        findRecordValue(record, ["거래구분", "구분"]) ??
+          inferTransactionKindFromText(label) ??
+          undefined,
+      ) ?? inferTransactionKindFromText(label);
+      const direction = kind ? inferDirectionFromKind(kind) : undefined;
+      const assetCategory = inferMiraeHoldingCategory(
+        `${label ?? ""} ${productName ?? ""} ${table.title ?? ""}`,
+      );
+
+      if (
+        !label &&
+        !productName &&
+        !amount &&
+        !transactionDate &&
+        !settlementDate
+      ) {
+        continue;
+      }
+
+      transactions.push({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        sourceType: "broker_specific",
+        accountNumber,
+        displayAccountNumber: accountNumber,
+        ...(transactionDate ? { transactionDate } : {}),
+        ...(settlementDate ? { settlementDate } : {}),
+        ...(label ? { label } : {}),
+        ...(productName ? { productName } : {}),
+        ...(productCode ? { productCode } : {}),
+        ...(quantity ? { quantityRaw: quantity } : {}),
+        ...withParsedNumber("quantityValue", quantity),
+        ...(unitPrice ? { unitPriceRaw: unitPrice } : {}),
+        ...withParsedNumber("unitPriceValue", unitPrice),
+        ...(amount ? { amountRaw: amount } : {}),
+        ...withParsedNumber("amountValue", amount),
+        ...(settlementAmount ? { settlementAmountRaw: settlementAmount } : {}),
+        ...withParsedNumber("settlementAmountValue", settlementAmount),
+        ...(fee ? { feeRaw: fee } : {}),
+        ...withParsedNumber("feeValue", fee),
+        ...(tax ? { taxRaw: tax } : {}),
+        ...withParsedNumber("taxValue", tax),
+        ...(kind ? { kind } : {}),
+        ...(direction ? { direction } : {}),
+        ...(assetCategory ? { assetCategory } : {}),
+        raw: {
+          tableTitle: table.title,
+          ...record,
+        },
+      });
+    }
+  }
+
+  return transactions.sort((left, right) =>
+    `${right.transactionDate ?? ""}${right.transactionTime ?? ""}`.localeCompare(
+      `${left.transactionDate ?? ""}${left.transactionTime ?? ""}`,
+    ),
+  );
+}
+
+export function normalizeNhSecAssetSummary(
+  snapshot: BrokerAssetSnapshot,
+): NormalizedAssetSummary {
+  const summary = snapshot.nhsecAssetAnalysis;
+
+  return {
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    pageTitle: snapshot.pageTitle,
+    pageUrl: snapshot.pageUrl,
+    ...(summary?.ownerName ? { ownerName: summary.ownerName } : {}),
+    ...(summary?.standardDate ? { standardDate: summary.standardDate } : {}),
+    ...(summary?.totalAsset ? { totalAssetRaw: summary.totalAsset } : {}),
+    ...withParsedNumber("totalAssetValue", summary?.totalAsset),
+    ...(summary?.profitLoss ? { profitLossRaw: summary.profitLoss } : {}),
+    ...withParsedNumber("profitLossValue", summary?.profitLoss),
+    ...(summary?.returnRate ? { returnRateRaw: summary.returnRate } : {}),
+    ...withParsedNumber("returnRateValue", summary?.returnRate),
+  };
+}
+
+export function normalizeNhSecAccounts(
+  snapshot: NhSecBalancesSnapshot,
+): NormalizedAccount[] {
+  return snapshot.accounts.map((accountSnapshot) => ({
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    accountNumber: accountSnapshot.account.accountNumber,
+    displayAccountNumber: accountSnapshot.account.displayAccountNumber,
+    ...(accountSnapshot.account.accountType
+      ? { accountType: accountSnapshot.account.accountType }
+      : {}),
+    ...(accountSnapshot.account.ownerName
+      ? { ownerName: accountSnapshot.account.ownerName }
+      : {}),
+    ...(accountSnapshot.summary.totalAsset
+      ? { totalAssetRaw: accountSnapshot.summary.totalAsset }
+      : {}),
+    ...withParsedNumber("totalAssetValue", accountSnapshot.summary.totalAsset),
+    ...(accountSnapshot.summary.withdrawableAmount
+      ? { withdrawableAmountRaw: accountSnapshot.summary.withdrawableAmount }
+      : {}),
+    ...withParsedNumber(
+      "withdrawableAmountValue",
+      accountSnapshot.summary.withdrawableAmount,
+    ),
+    raw: accountSnapshot.summary.raw,
+  }));
+}
+
+export function normalizeNhSecHoldings(
+  snapshot: NhSecBalancesSnapshot | NhSecForeignAssetsSnapshot,
+): NormalizedHolding[] {
+  const balanceHoldings =
+    "holdings" in snapshot
+      ? snapshot.holdings.map((holding) => {
+          const assetType = "assetType" in holding ? holding.assetType : undefined;
+          const productType = holding.productType;
+          const market = holding.market;
+          const currency = holding.currency;
+          const symbol = "symbol" in holding ? holding.symbol : undefined;
+          const quantity = holding.quantity;
+          const purchasePrice = holding.purchasePrice;
+          const currentPrice = holding.currentPrice;
+          const purchaseAmount = holding.purchaseAmount;
+          const evaluationAmount = holding.evaluationAmount;
+          const profitLoss = holding.profitLoss;
+          const returnRate = holding.returnRate;
+          const category = inferGenericHoldingCategory(
+            `${assetType ?? ""} ${productType ?? ""} ${market ?? ""} ${currency ?? ""} ${holding.productName ?? ""}`,
+          );
+
+          return {
+            brokerId: snapshot.brokerId,
+            brokerName: snapshot.brokerName,
+            capturedAt: snapshot.capturedAt,
+            accountNumber: holding.accountNumber,
+            displayAccountNumber: holding.displayAccountNumber,
+            ...(holding.accountType ? { accountType: holding.accountType } : {}),
+            ...(holding.ownerName ? { ownerName: holding.ownerName } : {}),
+            category,
+            ...(holding.productName ? { productName: holding.productName } : {}),
+            ...(holding.productCode ? { productCode: holding.productCode } : {}),
+            ...(symbol ? { symbol } : {}),
+            ...(market ? { market } : {}),
+            ...(currency ? { currency } : {}),
+            ...(quantity ? { quantityRaw: quantity } : {}),
+            ...withParsedNumber("quantityValue", quantity),
+            ...(purchasePrice ? { purchasePriceRaw: purchasePrice } : {}),
+            ...withParsedNumber("purchasePriceValue", purchasePrice),
+            ...(currentPrice ? { currentPriceRaw: currentPrice } : {}),
+            ...withParsedNumber("currentPriceValue", currentPrice),
+            ...(purchaseAmount ? { purchaseAmountRaw: purchaseAmount } : {}),
+            ...withParsedNumber("purchaseAmountValue", purchaseAmount),
+            ...(evaluationAmount ? { evaluationAmountRaw: evaluationAmount } : {}),
+            ...withParsedNumber("evaluationAmountValue", evaluationAmount),
+            ...(profitLoss ? { profitLossRaw: profitLoss } : {}),
+            ...withParsedNumber("profitLossValue", profitLoss),
+            ...(returnRate ? { returnRateRaw: returnRate } : {}),
+            ...withParsedNumber("returnRateValue", returnRate),
+            raw: holding.raw,
+          } satisfies NormalizedHolding;
+        })
+      : [];
+
+  return balanceHoldings;
+}
+
+export function normalizeNhSecTransactions(
+  snapshot: NhSecTransactionsSnapshot,
+): NormalizedTransaction[] {
+  return snapshot.transactions.map((transaction) => {
+    const kind = normalizeTransactionKind(transaction.transactionKind);
+    const inferredAssetCategory = inferGenericHoldingCategory(
+      `${transaction.label ?? ""} ${transaction.detailLabel ?? ""} ${transaction.productName ?? ""} ${transaction.currency ?? ""}`,
+    );
+    const assetCategory =
+      kind === "deposit" || kind === "withdrawal" || kind === "fee" || kind === "tax"
+        ? "cash"
+        : inferredAssetCategory;
+
+    return {
+      brokerId: snapshot.brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      sourceType: "broker_specific",
+      accountNumber: transaction.accountNumber,
+      displayAccountNumber: transaction.displayAccountNumber,
+      ...(transaction.accountType ? { accountType: transaction.accountType } : {}),
+      ...(transaction.ownerName ? { ownerName: transaction.ownerName } : {}),
+      ...(transaction.transactionDate
+        ? { transactionDate: transaction.transactionDate }
+        : {}),
+      ...(transaction.registrationTime
+        ? { transactionTime: transaction.registrationTime }
+        : {}),
+      ...(transaction.label ? { label: transaction.label } : {}),
+      ...(transaction.detailLabel ? { detailType: transaction.detailLabel } : {}),
+      ...(transaction.productName ? { productName: transaction.productName } : {}),
+      ...(transaction.productCode ? { productCode: transaction.productCode } : {}),
+      ...(transaction.currency ? { currency: transaction.currency } : {}),
+      ...(transaction.quantity ? { quantityRaw: transaction.quantity } : {}),
+      ...withParsedNumber("quantityValue", transaction.quantity),
+      ...(transaction.unitPrice ? { unitPriceRaw: transaction.unitPrice } : {}),
+      ...withParsedNumber("unitPriceValue", transaction.unitPrice),
+      ...(transaction.amount ? { amountRaw: transaction.amount } : {}),
+      ...withParsedNumber("amountValue", transaction.amount),
+      ...(transaction.settlementAmount
+        ? { settlementAmountRaw: transaction.settlementAmount }
+        : {}),
+      ...withParsedNumber(
+        "settlementAmountValue",
+        transaction.settlementAmount,
+      ),
+      ...(transaction.balanceAfter ? { balanceAfterRaw: transaction.balanceAfter } : {}),
+      ...withParsedNumber("balanceAfterValue", transaction.balanceAfter),
+      ...(transaction.fee ? { feeRaw: transaction.fee } : {}),
+      ...withParsedNumber("feeValue", transaction.fee),
+      ...(transaction.tax ? { taxRaw: transaction.tax } : {}),
+      ...withParsedNumber("taxValue", transaction.tax),
+      ...(transaction.channel ? { channel: transaction.channel } : {}),
+      ...(kind ? { kind } : {}),
+      ...(transaction.direction ? { direction: transaction.direction } : {}),
+      ...(assetCategory ? { assetCategory } : {}),
+      raw: transaction.raw,
+    };
+  });
 }
 
 export function normalizeSamsungAssetSummary(

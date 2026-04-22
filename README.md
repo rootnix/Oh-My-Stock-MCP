@@ -7,46 +7,76 @@
 [![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Frootnix%2Foh--my--stock--mcp-blue)](https://ghcr.io/rootnix/oh-my-stock-mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-> 내 한국 증권 자산을 MCP 툴로 조회하고 싶을 때 바로 연결해서 쓸 수 있는 서버.
+> 내 한국 증권 자산을 MCP 툴로 조회하기 위한 서버
 
-현재 지원:
+- 지원 브로커: `samsungpop`, `shinhansec`, `miraeasset`, `nhsec`
+- 실행 방식: Node.js / Docker / MCP stdio
+- 공통 인터페이스: normalized summary / accounts / holdings / transactions
 
-- `samsungpop` — 삼성증권
-- `shinhansec` — 신한투자증권
+## 상태 표기
+
+- ✅ 지원
+- ⚠️ 부분 지원 / 제한 있음
+- ❌ 미지원
 
 ## 가장 쉬운 시작 방법
 
-### 1) 공개 Docker 이미지 받기
-
 ```bash
 docker pull ghcr.io/rootnix/oh-my-stock-mcp:latest
-```
-
-### 2) 설정 파일 준비
-
-```bash
 cp .env.example .env
 mkdir -p .data
-```
 
-### 3) 실행
-
-```bash
 docker run -i --rm \
   --env-file .env \
   -v "$(pwd)/.data:/app/.data" \
   ghcr.io/rootnix/oh-my-stock-mcp:latest
 ```
 
-## 한눈에 보기
+## 증권사별 커버리지
 
-| 항목 | 내용 |
+> 마지막 실검증 기준: **2026-04-23 (KST)**
+
+### 요약
+
+| 증권사 | 브로커 ID | 로그인 | 자산 | 계좌 | 보유내역 | 거래내역 | 성과/분석 | 비고 |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 삼성증권 | `samsungpop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 가장 완성도가 높음 |
+| 신한투자증권 | `shinhansec` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | 삼성증권에 거의 준하는 수준 |
+| 미래에셋증권 | `miraeasset` | ✅ | ✅ | ✅ | ✅ | ❌ | ⚠️ | 현재는 자산 중심 지원 |
+| NH투자증권 | `nhsec` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | 세부 탭까지 폭넓게 연결됨 |
+
+### 상세 매트릭스
+
+| 기능 | 삼성증권 | 신한투자증권 | 미래에셋증권 | NH투자증권 |
+| --- | ---: | ---: | ---: | ---: |
+| 총자산 요약 | ✅ | ✅ | ✅ | ✅ |
+| 계좌 목록 | ✅ | ✅ | ✅ | ✅ |
+| 계좌별 상세 | ✅ | ✅ | ✅ | ✅ |
+| 국내주식 보유 | ⚠️* | ✅ | ⚠️ | ✅ |
+| 해외주식 보유 | ✅ | ✅ | ✅ | ✅ |
+| 펀드 / 금융상품 보유 | ⚠️ | ✅ | ⚠️ | ✅ |
+| 연금 / 퇴직연금 | ✅ | ✅ | ❌ | ✅ |
+| 예수금 / 현금성 자산 | ✅ | ✅ | ✅ | ✅ |
+| 외화 잔고 | ✅ | ✅ | ✅ | ✅ |
+| 종합 거래내역 | ✅ | ✅ | ❌ | ✅ |
+| 입출금 내역 | ✅ | ✅ | ❌ | ✅ |
+| 주식 거래내역 | ✅ | ✅ | ❌ | ⚠️ |
+| 펀드 거래내역 | ⚠️ | ✅ | ❌ | ✅ |
+| Wrap / RP / MMW 거래 | ❌ | ✅ | ❌ | ✅ |
+| 포트폴리오 분석 | ✅ | ✅ | ⚠️ | ❌ |
+| 일별 / 월별 성과 이력 | ✅ | ⚠️ | ❌ | ❌ |
+| Deep Snapshot | ✅ | ✅ | ✅** | ✅ |
+
+\* 삼성증권 국내주식 파서는 구현되어 있으나, 실계정 기준 검증 범위는 제한적입니다.  
+\** 미래에셋 `Deep Snapshot`은 현재 자산 중심입니다.
+
+## 최근 변경 사항
+
+| 날짜 | 변경 내용 |
 | --- | --- |
-| 실행 방식 | Node.js / Docker / MCP stdio |
-| 지원 증권사 | 삼성증권, 신한투자증권 |
-| 주요 데이터 | 총자산, 계좌, 보유종목, 거래내역, 연금, 외화자산 |
-| 공통 인터페이스 | normalized summary / accounts / holdings / transactions |
-| 추천 사용 방식 | GHCR Docker 이미지 직접 실행 |
+| 2026-04-23 | 미래에셋 자산/보유내역 지원 추가, NH 구조화 계좌/보유/거래내역 및 세부 잔고·특수 자산 탭 확장 |
+| 2026-04-22 | 신한투자증권 자산/거래/금융상품 범위 확장, normalized 툴 추가 |
+| 2026-04-21 | 삼성증권 기반 MCP 서버 최초 공개 |
 
 ## 주요 기능
 
@@ -55,14 +85,12 @@ docker run -i --rm \
 - 보유주식 / 펀드 / 연금 / 외화자산 조회
 - 거래내역 / 입출금 / 일부 금융상품 거래내역 조회
 - 브로커 공통 normalized 응답 제공
-- stdio 기반 MCP 서버
 
 ## 주의사항
 
-- 이 프로젝트는 개인 금융정보를 다룹니다.
 - `.env`, `.data/sessions` 등 인증정보가 담긴 파일은 절대 공유하지 마세요.
 - 증권사 웹사이트 구조 변경에 따라 일부 기능이 깨질 수 있습니다.
-- 사용 전 각 증권사의 이용약관/보안정책을 직접 확인하세요.
+- 사용 전 각 증권사의 이용약관과 보안정책을 직접 확인하세요.
 
 ## 로컬 실행
 
@@ -86,7 +114,7 @@ cp .env.example .env
 
 ### 삼성증권
 
-권장: 수동 세션 저장
+권장 설정:
 
 ```dotenv
 SAMSUNGPOP_AUTH_MODE=manual_session
@@ -108,8 +136,6 @@ SAMSUNGPOP_ACCOUNT_NUMBER_HINT=12345678
 
 ### 신한투자증권
 
-자동 로그인:
-
 ```dotenv
 SHINHANSEC_AUTH_MODE=credentials
 SHINHANSEC_USER_ID=...
@@ -123,36 +149,56 @@ SHINHANSEC_ACCOUNT_PASSWORD=1234
 npm run auth:shinhansec
 ```
 
+### 미래에셋증권
+
+```dotenv
+MIRAEASSET_AUTH_MODE=credentials
+MIRAEASSET_USER_ID=...
+MIRAEASSET_USER_PASSWORD=...
+```
+
+수동 세션 저장:
+
+```bash
+npm run auth:miraeasset
+```
+
+> 현재 미래에셋은 자산/보유내역 중심으로 지원합니다. 거래내역 등 민감 페이지는 추가 인증이 필요합니다.
+
+### NH투자증권
+
+```dotenv
+NHSEC_AUTH_MODE=credentials
+NHSEC_USER_ID=...
+NHSEC_USER_PASSWORD=...
+```
+
+수동 세션 저장:
+
+```bash
+npm run auth:nhsec
+```
+
+> 현재 NH투자증권은 My자산, 종합잔고, 거래내역, 입출금, 해외증권, 신탁, Wrap, RP/MMW, 세부 잔고 탭까지 연결되어 있습니다.
+
 ## Docker 실행
 
-### 공개 이미지 바로 사용
-
-이미지 다운로드:
+### 공개 이미지 사용
 
 ```bash
 docker pull ghcr.io/rootnix/oh-my-stock-mcp:latest
-```
 
-실행:
-
-```bash
 docker run -i --rm \
   --env-file .env \
   -v "$(pwd)/.data:/app/.data" \
   ghcr.io/rootnix/oh-my-stock-mcp:latest
 ```
 
-### 소스에서 직접 빌드해서 사용
-
-이미지 빌드:
+### 소스에서 직접 빌드
 
 ```bash
 docker build -t oh-my-stock-mcp .
-```
 
-실행:
-
-```bash
 docker run -i --rm \
   --env-file .env \
   -v "$(pwd)/.data:/app/.data" \
@@ -163,7 +209,7 @@ docker run -i --rm \
 
 자세한 예시는 [`docs/MCP_CLIENTS.md`](docs/MCP_CLIENTS.md) 참고.
 
-간단한 로컬 Node 실행 예시:
+Node 실행 예시:
 
 ```json
 {
@@ -174,7 +220,7 @@ docker run -i --rm \
 }
 ```
 
-간단한 Docker 실행 예시:
+Docker 실행 예시:
 
 ```json
 {
@@ -201,21 +247,11 @@ docker run -i --rm \
 - `get_normalized_holdings`
 - `get_normalized_transactions`
 
-주요 필드:
+주요 필드 예시:
 
-- 자산 요약:
-  - `totalAssetRaw`, `totalAssetValue`
-  - `profitLossRaw`, `profitLossValue`
-  - `returnRateRaw`, `returnRateValue`
-- 보유내역:
-  - `category`
-  - `productName`, `productCode`
-  - `purchaseAmountValue`, `evaluationAmountValue`
-- 거래내역:
-  - `sourceType`
-  - `kind`
-  - `direction`
-  - `assetCategory`
+- 자산 요약: `totalAssetRaw`, `totalAssetValue`, `profitLossRaw`, `profitLossValue`, `returnRateRaw`, `returnRateValue`
+- 보유내역: `category`, `productName`, `productCode`, `purchaseAmountValue`, `evaluationAmountValue`
+- 거래내역: `sourceType`, `kind`, `direction`, `assetCategory`
 
 ## 제공 툴
 
@@ -273,6 +309,35 @@ docker run -i --rm \
 - `get_shinhansec_passbook_transactions`
 - `get_shinhansec_cash_transactions`
 - `get_shinhansec_deep_snapshot`
+
+### 미래에셋증권
+
+- `setup_miraeasset_session`
+- `get_miraeasset_accounts`
+- `get_miraeasset_product_assets`
+- `get_miraeasset_transactions`
+- `get_miraeasset_investment_return`
+- `get_miraeasset_deep_snapshot`
+
+### NH투자증권
+
+- `setup_nhsec_session`
+- `get_nhsec_accounts`
+- `get_nhsec_balance_details`
+- `get_nhsec_holdings`
+- `get_nhsec_balance_category`
+- `get_nhsec_transactions_structured`
+- `get_nhsec_transaction_category`
+- `get_nhsec_cash_transactions`
+- `get_nhsec_foreign_assets`
+- `get_nhsec_special_assets`
+- `get_nhsec_my_asset`
+- `get_nhsec_general_balance`
+- `get_nhsec_total_transactions`
+- `get_nhsec_deposit_withdrawals`
+- `get_nhsec_foreign_balance`
+- `get_nhsec_foreign_transactions`
+- `get_nhsec_deep_snapshot`
 
 ## 다음 증권사 추가
 

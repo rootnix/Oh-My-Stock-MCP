@@ -19,7 +19,9 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "auth:samsungpop": "tsx src/scripts/auth-samsungpop.ts",
-    "auth:shinhansec": "tsx src/scripts/auth-shinhansec.ts"
+    "auth:shinhansec": "tsx src/scripts/auth-shinhansec.ts",
+    "auth:miraeasset": "tsx src/scripts/auth-miraeasset.ts",
+    "auth:nhsec": "tsx src/scripts/auth-nhsec.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

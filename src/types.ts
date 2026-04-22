@@ -1,4 +1,4 @@
-export type BrokerId = "samsungpop" | "shinhansec";
+export type BrokerId = "samsungpop" | "shinhansec" | "miraeasset" | "nhsec";
 
 export type AuthMode = "manual_session" | "credentials";
 
@@ -893,6 +893,505 @@ export type ShinhanSecDeepSnapshot = {
   };
 };
 
+export type MiraeAssetSummary = {
+  ownerName?: string;
+  standardDate?: string;
+  totalAsset?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  rawSummary: Record<string, string>;
+};
+
+export type MiraeAssetPageSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  pageTitle: string;
+  pageUrl: string;
+  headings: string[];
+  keyValues: ExtractedKeyValue[];
+  tables: ExtractedTable[];
+  rawTextPreview: string;
+  summary?: MiraeAssetSummary;
+  debugArtifacts?: DebugArtifacts;
+};
+
+export type MiraeAssetDeepSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  assetSnapshot: BrokerAssetSnapshot;
+  accounts: MiraeAssetPageSnapshot;
+  productAssets: MiraeAssetPageSnapshot;
+  transactions: MiraeAssetPageSnapshot;
+  investmentReturn: MiraeAssetPageSnapshot;
+};
+
+export type NhSecSummary = {
+  ownerName?: string;
+  standardDate?: string;
+  totalAsset?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  rawSummary: Record<string, string>;
+};
+
+export type NhSecPageSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  pageTitle: string;
+  pageUrl: string;
+  headings: string[];
+  keyValues: ExtractedKeyValue[];
+  tables: ExtractedTable[];
+  rawTextPreview: string;
+  summary?: NhSecSummary;
+  debugArtifacts?: DebugArtifacts;
+};
+
+export type NhSecDeepSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  assetSnapshot: BrokerAssetSnapshot;
+  myAsset: NhSecPageSnapshot;
+  generalBalance: NhSecPageSnapshot;
+  totalTransactions: NhSecPageSnapshot;
+  depositWithdrawals: NhSecPageSnapshot;
+  foreignBalance: NhSecPageSnapshot;
+  foreignTransactions: NhSecPageSnapshot;
+  accounts?: NhSecAccountsSnapshot;
+  balanceSnapshot?: NhSecBalancesSnapshot;
+  detailedBalanceSnapshots?: Partial<
+    Record<NhSecBalanceCategory, NhSecDetailedBalanceSnapshot>
+  >;
+  transactionsSnapshot?: NhSecTransactionsSnapshot;
+  categorizedTransactionSnapshots?: Partial<
+    Record<NhSecTransactionCategory, NhSecCategorizedTransactionsSnapshot>
+  >;
+  cashTransactionsSnapshot?: NhSecTransactionsSnapshot;
+  foreignAssetsSnapshot?: NhSecForeignAssetsSnapshot;
+  specialAssetSnapshots?: Partial<
+    Record<NhSecSpecialAssetCategory, NhSecSpecialAssetsSnapshot>
+  >;
+};
+
+export type NhSecAccount = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  rawLabel: string;
+  rawValue: string;
+  accountType?: string;
+  ownerName?: string;
+  selected?: boolean;
+};
+
+export type NhSecAccountsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  pageTitle: string;
+  pageUrl: string;
+  accounts: NhSecAccount[];
+};
+
+export type NhSecBalanceSummary = {
+  ownerName?: string;
+  contactType?: string;
+  managerName?: string;
+  depositAmount?: string;
+  nextDayDepositAmount?: string;
+  nextTwoDayDepositAmount?: string;
+  foreignCurrencyMarginAmount?: string;
+  foreignCurrencyAvailableAmount?: string;
+  withdrawableAmount?: string;
+  stockAvailableAmount?: string;
+  totalAsset?: string;
+  netAsset?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  cashWaitingAmount?: string;
+  financialProductAvailableAmount?: string;
+  loanAmount?: string;
+  pledgeAmount?: string;
+  interestDueAmount?: string;
+  subscriptionAmount?: string;
+  accountProductType?: string;
+  accountStatus?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecHolding = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  assetType?: string;
+  positionType?: string;
+  productType?: string;
+  productName?: string;
+  productCode?: string;
+  symbol?: string;
+  market?: string;
+  currency?: string;
+  quantity?: string;
+  purchasePrice?: string;
+  currentPrice?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  realizedProfit?: string;
+  returnRate?: string;
+  orderableQuantity?: string;
+  settlementPendingQuantity?: string;
+  maturityDate?: string;
+  taxCategory?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecBalanceAccountSnapshot = {
+  account: NhSecAccount;
+  summary: NhSecBalanceSummary;
+  holdings: NhSecHolding[];
+};
+
+export type NhSecBalancesSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  requestedAccountNumber?: string;
+  availableAccounts: NhSecAccount[];
+  accounts: NhSecBalanceAccountSnapshot[];
+  holdings: NhSecHolding[];
+};
+
+export type NhSecBalanceCategory =
+  | "stock"
+  | "fund"
+  | "els_dls"
+  | "rp"
+  | "mmw"
+  | "bond"
+  | "cd"
+  | "cp"
+  | "pension"
+  | "retirement"
+  | "issued_note"
+  | "usd_issued_note"
+  | "ima";
+
+export type NhSecDetailedBalanceSummary = {
+  category: NhSecBalanceCategory;
+  ownerName?: string;
+  managerName?: string;
+  accountProductType?: string;
+  accountStatus?: string;
+  depositAmount?: string;
+  withdrawableAmount?: string;
+  totalAsset?: string;
+  netAsset?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecDetailedBalanceRecord = {
+  category: NhSecBalanceCategory;
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  assetType?: string;
+  productType?: string;
+  positionType?: string;
+  productName?: string;
+  englishName?: string;
+  productCode?: string;
+  symbol?: string;
+  market?: string;
+  currency?: string;
+  quantity?: string;
+  purchasePrice?: string;
+  currentPrice?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  realizedProfit?: string;
+  returnRate?: string;
+  orderableQuantity?: string;
+  sellableQuantity?: string;
+  maturityDate?: string;
+  exchangeRate?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecDetailedBalanceAccountSnapshot = {
+  account: NhSecAccount;
+  statusCode?: string;
+  statusMessage?: string;
+  request: Record<string, string>;
+  summary?: NhSecDetailedBalanceSummary;
+  records: NhSecDetailedBalanceRecord[];
+};
+
+export type NhSecDetailedBalanceSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  category: NhSecBalanceCategory;
+  query: {
+    inquiryDate: string;
+  };
+  requestedAccountNumber?: string;
+  availableAccounts: NhSecAccount[];
+  accounts: NhSecDetailedBalanceAccountSnapshot[];
+  records: NhSecDetailedBalanceRecord[];
+};
+
+export type NhSecSpecialAssetCategory =
+  | "trust"
+  | "wrap"
+  | "foreign_mutual_fund";
+
+export type NhSecSpecialAssetRecord = {
+  category: NhSecSpecialAssetCategory;
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  assetType?: string;
+  productType?: string;
+  productName?: string;
+  productCode?: string;
+  currency?: string;
+  quantity?: string;
+  purchasePrice?: string;
+  currentPrice?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  maturityDate?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecSpecialAssetSection = {
+  name: string;
+  rows: Record<string, string>[];
+};
+
+export type NhSecSpecialAssetAccountSnapshot = {
+  account: NhSecAccount;
+  statusCode?: string;
+  statusMessage?: string;
+  request: Record<string, string>;
+  summary: Record<string, string>;
+  records: NhSecSpecialAssetRecord[];
+  sections?: NhSecSpecialAssetSection[];
+};
+
+export type NhSecSpecialAssetsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  category: NhSecSpecialAssetCategory;
+  query: Record<string, string>;
+  requestedAccountNumber?: string;
+  availableAccounts: NhSecAccount[];
+  accounts: NhSecSpecialAssetAccountSnapshot[];
+  records: NhSecSpecialAssetRecord[];
+};
+
+export type NhSecTransactionCategory = "fund" | "wrap" | "mmw" | "rp";
+
+export type NhSecCategorizedTransactionRecord = {
+  category: NhSecTransactionCategory;
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  transactionDate?: string;
+  settlementDate?: string;
+  registrationDate?: string;
+  label?: string;
+  detailLabel?: string;
+  productName?: string;
+  productCode?: string;
+  quantity?: string;
+  unitPrice?: string;
+  amount?: string;
+  settlementAmount?: string;
+  balanceAfter?: string;
+  fee?: string;
+  tax?: string;
+  interest?: string;
+  note?: string;
+  transactionKind?: NhSecTransactionKind;
+  direction?: NhSecTransactionDirection;
+  raw: Record<string, string>;
+};
+
+export type NhSecCategorizedTransactionsAccountSnapshot = {
+  account: NhSecAccount;
+  statusCode?: string;
+  statusMessage?: string;
+  request: Record<string, string>;
+  summary: Record<string, string>;
+  transactions: NhSecCategorizedTransactionRecord[];
+};
+
+export type NhSecCategorizedTransactionsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  category: NhSecTransactionCategory;
+  query: {
+    startDate: string;
+    endDate: string;
+  };
+  requestedAccountNumber?: string;
+  availableAccounts: NhSecAccount[];
+  accounts: NhSecCategorizedTransactionsAccountSnapshot[];
+  transactions: NhSecCategorizedTransactionRecord[];
+};
+
+export type NhSecTransactionKind =
+  | "buy"
+  | "sell"
+  | "deposit"
+  | "withdrawal"
+  | "dividend"
+  | "interest"
+  | "fee"
+  | "tax"
+  | "exchange"
+  | "transfer"
+  | "unknown";
+
+export type NhSecTransactionDirection = "in" | "out" | "neutral";
+
+export type NhSecTransactionRecord = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  transactionDate?: string;
+  registrationDate?: string;
+  registrationTime?: string;
+  label?: string;
+  detailLabel?: string;
+  transactionMedium?: string;
+  channel?: string;
+  currency?: string;
+  productName?: string;
+  productCode?: string;
+  quantity?: string;
+  unitPrice?: string;
+  amount?: string;
+  settlementAmount?: string;
+  balanceAfter?: string;
+  fee?: string;
+  tax?: string;
+  counterpartyName?: string;
+  counterpartyAccount?: string;
+  transactionKind?: NhSecTransactionKind;
+  direction?: NhSecTransactionDirection;
+  raw: Record<string, string>;
+};
+
+export type NhSecTransactionAccountSnapshot = {
+  account: NhSecAccount;
+  summary: Record<string, string>;
+  transactions: NhSecTransactionRecord[];
+};
+
+export type NhSecTransactionsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  query: {
+    startDate: string;
+    endDate: string;
+  };
+  requestedAccountNumber?: string;
+  availableAccounts: NhSecAccount[];
+  accounts: NhSecTransactionAccountSnapshot[];
+  transactions: NhSecTransactionRecord[];
+};
+
+export type NhSecForeignCashBalance = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  currencyCode?: string;
+  depositAmount?: string;
+  foreignCurrencyEvaluationAmount?: string;
+  foreignAssetAmount?: string;
+  withdrawableAmount?: string;
+  withdrawableAmountStep1?: string;
+  withdrawableAmountStep2?: string;
+  exchangeRate?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecForeignAssetSummary = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecForeignHolding = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  market?: string;
+  currency?: string;
+  productName?: string;
+  englishName?: string;
+  productCode?: string;
+  symbol?: string;
+  productType?: string;
+  positionType?: string;
+  quantity?: string;
+  confirmedBuyQuantity?: string;
+  sellableQuantity?: string;
+  purchasePrice?: string;
+  currentPrice?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  exchangeRate?: string;
+  raw: Record<string, string>;
+};
+
+export type NhSecForeignAssetsAccountSnapshot = {
+  account: NhSecAccount;
+  summary?: NhSecForeignAssetSummary;
+  cashBalances: NhSecForeignCashBalance[];
+  holdings: NhSecForeignHolding[];
+};
+
+export type NhSecForeignAssetsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  requestedAccountNumber?: string;
+  availableAccounts: NhSecAccount[];
+  accounts: NhSecForeignAssetsAccountSnapshot[];
+  cashBalances: NhSecForeignCashBalance[];
+  holdings: NhSecForeignHolding[];
+};
+
 export type BrokerAssetSnapshot = {
   brokerId: BrokerId;
   brokerName: string;
@@ -922,6 +1421,22 @@ export type BrokerAssetSnapshot = {
     investmentOverview?: ShinhanSecAssetBreakdownItem[];
     financialProductOverview?: ShinhanSecAssetBreakdownItem[];
     accounts?: ShinhanSecAccountAssetSummaryItem[];
+  };
+  miraeassetAssetAnalysis?: {
+    ownerName?: string;
+    standardDate?: string;
+    totalAsset?: string;
+    profitLoss?: string;
+    returnRate?: string;
+    rawSummary?: Record<string, string>;
+  };
+  nhsecAssetAnalysis?: {
+    ownerName?: string;
+    standardDate?: string;
+    totalAsset?: string;
+    profitLoss?: string;
+    returnRate?: string;
+    rawSummary?: Record<string, string>;
   };
   debugArtifacts?: DebugArtifacts;
 };

@@ -33,6 +33,22 @@ export type AppConfig = {
     debugDir: string;
     loginTimeoutMs: number;
   };
+  miraeasset: {
+    authMode: AuthMode;
+    userId?: string;
+    password?: string;
+    storageStatePath: string;
+    debugDir: string;
+    loginTimeoutMs: number;
+  };
+  nhsec: {
+    authMode: AuthMode;
+    userId?: string;
+    password?: string;
+    storageStatePath: string;
+    debugDir: string;
+    loginTimeoutMs: number;
+  };
 };
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -71,6 +87,10 @@ export function loadConfig(): AppConfig {
   const shinhanAccountPassword = cleanOptional(
     process.env.SHINHANSEC_ACCOUNT_PASSWORD,
   );
+  const miraeAssetUserId = cleanOptional(process.env.MIRAEASSET_USER_ID);
+  const miraeAssetPassword = cleanOptional(process.env.MIRAEASSET_USER_PASSWORD);
+  const nhSecUserId = cleanOptional(process.env.NHSEC_USER_ID);
+  const nhSecPassword = cleanOptional(process.env.NHSEC_USER_PASSWORD);
 
   return {
     rootDir,
@@ -101,6 +121,22 @@ export function loadConfig(): AppConfig {
       ...(shinhanAccountPassword
         ? { accountPassword: shinhanAccountPassword }
         : {}),
+    },
+    miraeasset: {
+      authMode: parseAuthMode(process.env.MIRAEASSET_AUTH_MODE),
+      storageStatePath: path.join(dataDir, "sessions", "miraeasset.storage.json"),
+      debugDir: path.join(dataDir, "debug", "miraeasset"),
+      loginTimeoutMs: 90_000,
+      ...(miraeAssetUserId ? { userId: miraeAssetUserId } : {}),
+      ...(miraeAssetPassword ? { password: miraeAssetPassword } : {}),
+    },
+    nhsec: {
+      authMode: parseAuthMode(process.env.NHSEC_AUTH_MODE),
+      storageStatePath: path.join(dataDir, "sessions", "nhsec.storage.json"),
+      debugDir: path.join(dataDir, "debug", "nhsec"),
+      loginTimeoutMs: 90_000,
+      ...(nhSecUserId ? { userId: nhSecUserId } : {}),
+      ...(nhSecPassword ? { password: nhSecPassword } : {}),
     },
   };
 }
