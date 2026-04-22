@@ -1,0 +1,10 @@
+.git
+.github
+.omx
+.data
+.env
+node_modules
+dist
+playwright-report
+test-results
+npm-debug.log*

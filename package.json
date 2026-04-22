@@ -1,0 +1,35 @@
+{
+  "name": "oh-my-stock-mcp",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "MCP server for collecting Korean brokerage account, asset, holding, and transaction data.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rootnix/Oh-My-Stock-MCP.git"
+  },
+  "homepage": "https://github.com/rootnix/Oh-My-Stock-MCP",
+  "bugs": {
+    "url": "https://github.com/rootnix/Oh-My-Stock-MCP/issues"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "auth:samsungpop": "tsx src/scripts/auth-samsungpop.ts",
+    "auth:shinhansec": "tsx src/scripts/auth-shinhansec.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "dotenv": "17.4.2",
+    "playwright": "1.59.1",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3"
+  }
+}
