@@ -2,10 +2,51 @@
 
 한국 증권사 웹사이트에서 자산, 계좌, 보유종목, 거래내역을 읽어오는 로컬 MCP 서버입니다.
 
+[![CI](https://github.com/rootnix/Oh-My-Stock-MCP/actions/workflows/ci.yml/badge.svg)](https://github.com/rootnix/Oh-My-Stock-MCP/actions/workflows/ci.yml)
+[![Docker Publish](https://github.com/rootnix/Oh-My-Stock-MCP/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/rootnix/Oh-My-Stock-MCP/actions/workflows/docker-publish.yml)
+[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Frootnix%2Foh--my--stock--mcp-blue)](https://ghcr.io/rootnix/oh-my-stock-mcp)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
+> 내 한국 증권 자산을 MCP 툴로 조회하고 싶을 때 바로 연결해서 쓸 수 있는 서버.
+
 현재 지원:
 
 - `samsungpop` — 삼성증권
 - `shinhansec` — 신한투자증권
+
+## 가장 쉬운 시작 방법
+
+### 1) 공개 Docker 이미지 받기
+
+```bash
+docker pull ghcr.io/rootnix/oh-my-stock-mcp:latest
+```
+
+### 2) 설정 파일 준비
+
+```bash
+cp .env.example .env
+mkdir -p .data
+```
+
+### 3) 실행
+
+```bash
+docker run -i --rm \
+  --env-file .env \
+  -v "$(pwd)/.data:/app/.data" \
+  ghcr.io/rootnix/oh-my-stock-mcp:latest
+```
+
+## 한눈에 보기
+
+| 항목 | 내용 |
+| --- | --- |
+| 실행 방식 | Node.js / Docker / MCP stdio |
+| 지원 증권사 | 삼성증권, 신한투자증권 |
+| 주요 데이터 | 총자산, 계좌, 보유종목, 거래내역, 연금, 외화자산 |
+| 공통 인터페이스 | normalized summary / accounts / holdings / transactions |
+| 추천 사용 방식 | GHCR Docker 이미지 직접 실행 |
 
 ## 주요 기능
 
@@ -83,8 +124,6 @@ npm run auth:shinhansec
 ```
 
 ## Docker 실행
-
-직접 빌드하지 않고 공개된 이미지를 바로 사용할 수 있습니다.
 
 ### 공개 이미지 바로 사용
 
