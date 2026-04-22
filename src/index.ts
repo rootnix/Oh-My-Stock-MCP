@@ -13,7 +13,6 @@ import {
   normalizeMiraeAssetAccounts,
   normalizeMiraeAssetAssetSummary,
   normalizeMiraeAssetHoldings,
-  normalizeMiraeAssetTransactions,
   normalizeNhSecAccounts,
   normalizeNhSecAssetSummary,
   normalizeNhSecHoldings,
@@ -27,12 +26,18 @@ import {
   normalizeShinhanHoldings,
   normalizeShinhanTransactions,
 } from "./lib/normalize.js";
-import type { BrokerId } from "./types.js";
+import type {
+  BrokerId,
+  NormalizedAssetSummary,
+  NormalizedHolding,
+  NormalizedTransaction,
+} from "./types.js";
 
 const config = loadConfig();
 const registry = createBrokerRegistry(config);
 
 const brokerIdSchema = z.enum(["samsungpop", "shinhansec", "miraeasset", "nhsec"]);
+const brokerIdsSchema = z.array(brokerIdSchema).min(1).optional();
 const shinhanFinancialTransactionCategorySchema = z.enum([
   "fund",
   "els_dls",
@@ -133,6 +138,262 @@ function countBy(values: string[]) {
     accumulator[value] = (accumulator[value] ?? 0) + 1;
     return accumulator;
   }, {});
+}
+
+function resolveBrokerIds(requestedBrokerIds?: BrokerId[]): BrokerId[] {
+  if (!requestedBrokerIds?.length) {
+    return Object.keys(registry) as BrokerId[];
+  }
+
+  return Array.from(new Set(requestedBrokerIds));
+}
+
+function toFetchOptions(options: {
+  debug?: boolean;
+  forceRefresh?: boolean;
+  headless?: boolean;
+}) {
+  return {
+    ...(options.debug !== undefined ? { debug: options.debug } : {}),
+    ...(options.forceRefresh !== undefined
+      ? { forceRefresh: options.forceRefresh }
+      : {}),
+    ...(options.headless !== undefined ? { headless: options.headless } : {}),
+  };
+}
+
+async function fetchNormalizedAssetSummaryForBroker(
+  brokerId: BrokerId,
+  options: {
+    debug?: boolean;
+    forceRefresh?: boolean;
+    headless?: boolean;
+  },
+) : Promise<NormalizedAssetSummary> {
+  const broker = getBrokerOrThrow(registry, brokerId);
+  const snapshot = await broker.fetchAssetSnapshot(toFetchOptions(options));
+
+  return brokerId === "samsungpop"
+    ? normalizeSamsungAssetSummary(snapshot)
+    : brokerId === "shinhansec"
+      ? normalizeShinhanAssetSummary(snapshot)
+      : brokerId === "miraeasset"
+        ? normalizeMiraeAssetAssetSummary(snapshot)
+        : normalizeNhSecAssetSummary(snapshot);
+}
+
+async function fetchNormalizedHoldingsForBroker(
+  brokerId: BrokerId,
+  options: {
+    accountNumber?: string;
+    allAccounts?: boolean;
+    debug?: boolean;
+    forceRefresh?: boolean;
+    headless?: boolean;
+  },
+): Promise<{
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  requestedAccountNumber?: string;
+  holdings: NormalizedHolding[];
+}> {
+  if (brokerId === "samsungpop") {
+    const broker = getSamsungPopBroker();
+    const snapshot = await broker.fetchHoldings({
+      ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+      allAccounts: options.allAccounts ?? false,
+      ...toFetchOptions(options),
+    });
+    const holdings = normalizeSamsungHoldings(snapshot);
+
+    return {
+      brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      ...(snapshot.requestedAccountNumber
+        ? { requestedAccountNumber: snapshot.requestedAccountNumber }
+        : {}),
+      holdings,
+    };
+  }
+
+  if (brokerId === "miraeasset") {
+    const broker = getMiraeAssetBroker();
+    const accountsPage = await broker.fetchAccountsPage(toFetchOptions(options));
+    const holdings = normalizeMiraeAssetHoldings(accountsPage);
+
+    return {
+      brokerId,
+      brokerName: accountsPage.brokerName,
+      capturedAt: accountsPage.capturedAt,
+      holdings,
+    };
+  }
+
+  if (brokerId === "nhsec") {
+    const broker = getNhSecBroker();
+    const snapshot = await broker.fetchBalances({
+      ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+      allAccounts: options.allAccounts ?? !options.accountNumber,
+      ...toFetchOptions(options),
+    });
+    const holdings = normalizeNhSecHoldings(snapshot);
+    const filteredHoldings = options.accountNumber
+      ? holdings.filter((item) => item.accountNumber === options.accountNumber)
+      : holdings;
+
+    return {
+      brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
+      holdings: filteredHoldings,
+    };
+  }
+
+  const broker = getShinhanSecBroker();
+  const snapshot = await broker.fetchHoldings({
+    ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+    allAccounts: options.allAccounts ?? false,
+    ...toFetchOptions(options),
+  });
+  const holdings = normalizeShinhanHoldings(snapshot);
+
+  return {
+    brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    ...(snapshot.requestedAccountNumber
+      ? { requestedAccountNumber: snapshot.requestedAccountNumber }
+      : {}),
+    holdings,
+  };
+}
+
+async function fetchNormalizedTransactionsForBroker(
+  brokerId: BrokerId,
+  options: {
+    accountNumber?: string;
+    allAccounts?: boolean;
+    startDate?: string;
+    endDate?: string;
+    debug?: boolean;
+    forceRefresh?: boolean;
+    headless?: boolean;
+  },
+): Promise<{
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  requestedAccountNumber?: string;
+  query?: {
+    startDate?: string;
+    endDate?: string;
+  };
+  sourceTypes: string[];
+  transactions: NormalizedTransaction[];
+}> {
+  if (brokerId === "samsungpop") {
+    const broker = getSamsungPopBroker();
+    const snapshots = await broker.fetchTransactions({
+      ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+      allAccounts: options.allAccounts ?? false,
+      ...(options.startDate ? { startDate: options.startDate } : {}),
+      ...(options.endDate ? { endDate: options.endDate } : {}),
+      ...toFetchOptions(options),
+    });
+    const transactions = normalizeSamsungTransactions(snapshots);
+    const queryStartDate = options.startDate ?? snapshots[0]?.query.startDate;
+    const queryEndDate = options.endDate ?? snapshots[0]?.query.endDate;
+
+    return {
+      brokerId,
+      brokerName: snapshots[0]?.brokerName ?? broker.name,
+      capturedAt: new Date().toISOString(),
+      ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
+      query: {
+        ...(queryStartDate ? { startDate: queryStartDate } : {}),
+        ...(queryEndDate ? { endDate: queryEndDate } : {}),
+      },
+      sourceTypes: ["broker_specific"],
+      transactions,
+    };
+  }
+
+  if (brokerId === "miraeasset") {
+    throw new Error("미래에셋증권은 현재 통합 거래내역 조회를 지원하지 않습니다.");
+  }
+
+  if (brokerId === "nhsec") {
+    const broker = getNhSecBroker();
+    const snapshot = await broker.fetchTransactions({
+      ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+      allAccounts: options.allAccounts ?? !options.accountNumber,
+      ...(options.startDate ? { startDate: options.startDate } : {}),
+      ...(options.endDate ? { endDate: options.endDate } : {}),
+      ...toFetchOptions(options),
+    });
+    const transactions = normalizeNhSecTransactions(snapshot);
+    const filteredTransactions = options.accountNumber
+      ? transactions.filter((item) => item.accountNumber === options.accountNumber)
+      : transactions;
+
+    return {
+      brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
+      query: {
+        ...(options.startDate ? { startDate: options.startDate } : {}),
+        ...(options.endDate ? { endDate: options.endDate } : {}),
+      },
+      sourceTypes: ["broker_specific"],
+      transactions: filteredTransactions,
+    };
+  }
+
+  const broker = getShinhanSecBroker();
+  const general = await broker.fetchGeneralTransactions({
+    ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+    allAccounts: options.allAccounts ?? false,
+    ...(options.startDate ? { startDate: options.startDate } : {}),
+    ...(options.endDate ? { endDate: options.endDate } : {}),
+    ...toFetchOptions(options),
+  });
+  const cash = await broker.fetchCashTransactions({
+    ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+    allAccounts: options.allAccounts ?? false,
+    ...(options.startDate ? { startDate: options.startDate } : {}),
+    ...(options.endDate ? { endDate: options.endDate } : {}),
+    ...toFetchOptions(options),
+  });
+  const stock = config.shinhansec.accountPassword
+    ? await broker.fetchStockTransactions({
+        ...(options.accountNumber ? { accountNumber: options.accountNumber } : {}),
+        allAccounts: options.allAccounts ?? false,
+        ...(options.startDate ? { startDate: options.startDate } : {}),
+        ...(options.endDate ? { endDate: options.endDate } : {}),
+        ...toFetchOptions(options),
+      })
+    : undefined;
+  const transactions = normalizeShinhanTransactions({
+    general,
+    cash,
+    ...(stock ? { stock } : {}),
+  });
+
+  return {
+    brokerId,
+    brokerName: general.brokerName,
+    capturedAt: new Date().toISOString(),
+    ...(general.requestedAccountNumber
+      ? { requestedAccountNumber: general.requestedAccountNumber }
+      : {}),
+    query: general.query,
+    sourceTypes: Array.from(new Set(transactions.map((item) => item.sourceType))),
+    transactions,
+  };
 }
 
 server.registerTool(
@@ -291,23 +552,13 @@ server.registerTool(
   },
   async ({ brokerId, debug, forceRefresh, headless }) => {
     try {
-      const broker = getBrokerOrThrow(registry, brokerId);
-      const snapshot = await broker.fetchAssetSnapshot({
-        debug,
-        forceRefresh,
-        ...(headless !== undefined ? { headless } : {}),
-      });
-
       return toToolResult({
         brokerId,
-        normalized:
-          brokerId === "samsungpop"
-            ? normalizeSamsungAssetSummary(snapshot)
-            : brokerId === "shinhansec"
-              ? normalizeShinhanAssetSummary(snapshot)
-              : brokerId === "miraeasset"
-                ? normalizeMiraeAssetAssetSummary(snapshot)
-                : normalizeNhSecAssetSummary(snapshot),
+        normalized: await fetchNormalizedAssetSummaryForBroker(brokerId, {
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
       });
     } catch (error) {
       return toToolError(error);
@@ -425,102 +676,25 @@ server.registerTool(
   },
   async ({ brokerId, accountNumber, allAccounts, debug, forceRefresh, headless }) => {
     try {
-      if (brokerId === "samsungpop") {
-        const broker = getSamsungPopBroker();
-        const snapshot = await broker.fetchHoldings({
-          ...(accountNumber ? { accountNumber } : {}),
-          allAccounts,
-          debug,
-          forceRefresh,
-          ...(headless !== undefined ? { headless } : {}),
-        });
-        const holdings = normalizeSamsungHoldings(snapshot);
-
-        return toToolResult({
-          brokerId,
-          brokerName: snapshot.brokerName,
-          capturedAt: snapshot.capturedAt,
-          ...(snapshot.requestedAccountNumber
-            ? { requestedAccountNumber: snapshot.requestedAccountNumber }
-            : {}),
-          count: holdings.length,
-          categories: Array.from(new Set(holdings.map((item) => item.category))),
-          byCategory: countBy(holdings.map((item) => item.category)),
-          holdings,
-        });
-      }
-
-      if (brokerId === "miraeasset") {
-        const broker = getMiraeAssetBroker();
-        const accountsPage = await broker.fetchAccountsPage({
-          debug,
-          forceRefresh,
-          ...(headless !== undefined ? { headless } : {}),
-        });
-        const holdings = normalizeMiraeAssetHoldings(accountsPage);
-
-        return toToolResult({
-          brokerId,
-          brokerName: accountsPage.brokerName,
-          capturedAt: accountsPage.capturedAt,
-          count: holdings.length,
-          categories: Array.from(new Set(holdings.map((item) => item.category))),
-          byCategory: countBy(holdings.map((item) => item.category)),
-          holdings,
-          rawPageTitle: accountsPage.pageTitle,
-          rawPageUrl: accountsPage.pageUrl,
-        });
-      }
-
-      if (brokerId === "nhsec") {
-        const broker = getNhSecBroker();
-        const snapshot = await broker.fetchBalances({
-          ...(accountNumber ? { accountNumber } : {}),
-          allAccounts: allAccounts || !accountNumber,
-          debug,
-          forceRefresh,
-          ...(headless !== undefined ? { headless } : {}),
-        });
-        const holdings = normalizeNhSecHoldings(snapshot);
-        const filteredHoldings = accountNumber
-          ? holdings.filter((item) => item.accountNumber === accountNumber)
-          : holdings;
-
-        return toToolResult({
-          brokerId,
-          brokerName: snapshot.brokerName,
-          capturedAt: snapshot.capturedAt,
-          ...(accountNumber ? { requestedAccountNumber: accountNumber } : {}),
-          count: filteredHoldings.length,
-          categories: Array.from(
-            new Set(filteredHoldings.map((item) => item.category)),
-          ),
-          byCategory: countBy(filteredHoldings.map((item) => item.category)),
-          holdings: filteredHoldings,
-        });
-      }
-
-      const broker = getShinhanSecBroker();
-      const snapshot = await broker.fetchHoldings({
+      const response = await fetchNormalizedHoldingsForBroker(brokerId, {
         ...(accountNumber ? { accountNumber } : {}),
         allAccounts,
         debug,
         forceRefresh,
         ...(headless !== undefined ? { headless } : {}),
       });
-      const holdings = normalizeShinhanHoldings(snapshot);
 
       return toToolResult({
         brokerId,
-        brokerName: snapshot.brokerName,
-        capturedAt: snapshot.capturedAt,
-        ...(snapshot.requestedAccountNumber
-          ? { requestedAccountNumber: snapshot.requestedAccountNumber }
+        brokerName: response.brokerName,
+        capturedAt: response.capturedAt,
+        ...(response.requestedAccountNumber
+          ? { requestedAccountNumber: response.requestedAccountNumber }
           : {}),
-        count: holdings.length,
-        categories: Array.from(new Set(holdings.map((item) => item.category))),
-        byCategory: countBy(holdings.map((item) => item.category)),
-        holdings,
+        count: response.holdings.length,
+        categories: Array.from(new Set(response.holdings.map((item) => item.category))),
+        byCategory: countBy(response.holdings.map((item) => item.category)),
+        holdings: response.holdings,
       });
     } catch (error) {
       return toToolError(error);
@@ -556,123 +730,7 @@ server.registerTool(
     headless,
   }) => {
     try {
-      if (brokerId === "samsungpop") {
-        const broker = getSamsungPopBroker();
-        const snapshots = await broker.fetchTransactions({
-          ...(accountNumber ? { accountNumber } : {}),
-          allAccounts,
-          ...(startDate ? { startDate } : {}),
-          ...(endDate ? { endDate } : {}),
-          debug,
-          forceRefresh,
-          ...(headless !== undefined ? { headless } : {}),
-        });
-        const transactions = normalizeSamsungTransactions(snapshots);
-
-        return toToolResult({
-          brokerId,
-          brokerName: snapshots[0]?.brokerName ?? broker.name,
-          capturedAt: new Date().toISOString(),
-          ...(accountNumber ? { requestedAccountNumber: accountNumber } : {}),
-          query: {
-            ...(startDate || snapshots[0]?.query.startDate
-              ? { startDate: startDate ?? snapshots[0]?.query.startDate }
-              : {}),
-            ...(endDate || snapshots[0]?.query.endDate
-              ? { endDate: endDate ?? snapshots[0]?.query.endDate }
-              : {}),
-          },
-          sourceTypes: ["broker_specific"],
-          count: transactions.length,
-          bySourceType: countBy(transactions.map((item) => item.sourceType)),
-          byKind: countBy(
-            transactions
-              .flatMap((item) => (item.kind ? [item.kind] : [])),
-          ),
-          byDirection: countBy(
-            transactions
-              .flatMap((item) => (item.direction ? [item.direction] : [])),
-          ),
-          transactions,
-        });
-      }
-
-      if (brokerId === "miraeasset") {
-        const broker = getMiraeAssetBroker();
-        const snapshot = await broker.fetchTransactionsPage({
-          debug,
-          forceRefresh,
-          ...(headless !== undefined ? { headless } : {}),
-        });
-        const transactions = normalizeMiraeAssetTransactions(snapshot);
-
-        return toToolResult({
-          brokerId,
-          brokerName: snapshot.brokerName,
-          capturedAt: snapshot.capturedAt,
-          ...(startDate ? { requestedStartDate: startDate } : {}),
-          ...(endDate ? { requestedEndDate: endDate } : {}),
-          sourceTypes: ["broker_specific"],
-          count: transactions.length,
-          bySourceType: countBy(transactions.map((item) => item.sourceType)),
-          byKind: countBy(
-            transactions.flatMap((item) => (item.kind ? [item.kind] : [])),
-          ),
-          byDirection: countBy(
-            transactions.flatMap((item) =>
-              item.direction ? [item.direction] : [],
-            ),
-          ),
-          transactions,
-          rawPageTitle: snapshot.pageTitle,
-          rawPageUrl: snapshot.pageUrl,
-        });
-      }
-
-      if (brokerId === "nhsec") {
-        const broker = getNhSecBroker();
-        const snapshot = await broker.fetchTransactions({
-          ...(accountNumber ? { accountNumber } : {}),
-          allAccounts: allAccounts || !accountNumber,
-          ...(startDate ? { startDate } : {}),
-          ...(endDate ? { endDate } : {}),
-          debug,
-          forceRefresh,
-          ...(headless !== undefined ? { headless } : {}),
-        });
-        const transactions = normalizeNhSecTransactions(snapshot);
-        const filteredTransactions = accountNumber
-          ? transactions.filter((item) => item.accountNumber === accountNumber)
-          : transactions;
-
-        return toToolResult({
-          brokerId,
-          brokerName: snapshot.brokerName,
-          capturedAt: snapshot.capturedAt,
-          ...(accountNumber ? { requestedAccountNumber: accountNumber } : {}),
-          ...(startDate ? { requestedStartDate: startDate } : {}),
-          ...(endDate ? { requestedEndDate: endDate } : {}),
-          sourceTypes: ["broker_specific"],
-          count: filteredTransactions.length,
-          bySourceType: countBy(
-            filteredTransactions.map((item) => item.sourceType),
-          ),
-          byKind: countBy(
-            filteredTransactions.flatMap((item) =>
-              item.kind ? [item.kind] : [],
-            ),
-          ),
-          byDirection: countBy(
-            filteredTransactions.flatMap((item) =>
-              item.direction ? [item.direction] : [],
-            ),
-          ),
-          transactions: filteredTransactions,
-        });
-      }
-
-      const broker = getShinhanSecBroker();
-      const general = await broker.fetchGeneralTransactions({
+      const response = await fetchNormalizedTransactionsForBroker(brokerId, {
         ...(accountNumber ? { accountNumber } : {}),
         allAccounts,
         ...(startDate ? { startDate } : {}),
@@ -680,53 +738,313 @@ server.registerTool(
         debug,
         forceRefresh,
         ...(headless !== undefined ? { headless } : {}),
-      });
-      const cash = await broker.fetchCashTransactions({
-        ...(accountNumber ? { accountNumber } : {}),
-        allAccounts,
-        ...(startDate ? { startDate } : {}),
-        ...(endDate ? { endDate } : {}),
-        debug,
-        forceRefresh,
-        ...(headless !== undefined ? { headless } : {}),
-      });
-      const stock = config.shinhansec.accountPassword
-        ? await broker.fetchStockTransactions({
-            ...(accountNumber ? { accountNumber } : {}),
-            allAccounts,
-            ...(startDate ? { startDate } : {}),
-            ...(endDate ? { endDate } : {}),
-            debug,
-            forceRefresh,
-            ...(headless !== undefined ? { headless } : {}),
-          })
-        : undefined;
-      const transactions = normalizeShinhanTransactions({
-        general,
-        cash,
-        ...(stock ? { stock } : {}),
       });
 
       return toToolResult({
         brokerId,
-        brokerName: general.brokerName,
-        capturedAt: new Date().toISOString(),
-        ...(general.requestedAccountNumber
-          ? { requestedAccountNumber: general.requestedAccountNumber }
+        brokerName: response.brokerName,
+        capturedAt: response.capturedAt,
+        ...(response.requestedAccountNumber
+          ? { requestedAccountNumber: response.requestedAccountNumber }
           : {}),
-        query: general.query,
-        sourceTypes: Array.from(new Set(transactions.map((item) => item.sourceType))),
-        count: transactions.length,
-        bySourceType: countBy(transactions.map((item) => item.sourceType)),
+        ...(response.query ? { query: response.query } : {}),
+        sourceTypes: response.sourceTypes,
+        count: response.transactions.length,
+        bySourceType: countBy(response.transactions.map((item) => item.sourceType)),
         byKind: countBy(
-          transactions
-            .flatMap((item) => (item.kind ? [item.kind] : [])),
+          response.transactions.flatMap((item) => (item.kind ? [item.kind] : [])),
         ),
         byDirection: countBy(
-          transactions
-            .flatMap((item) => (item.direction ? [item.direction] : [])),
+          response.transactions.flatMap((item) =>
+            item.direction ? [item.direction] : []
+          ),
+        ),
+        transactions: response.transactions,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_all_assets",
+  {
+    title: "Get All Assets",
+    description:
+      "지원 중인 여러 증권사의 자산 요약을 한 번에 정규화해서 반환합니다. 멀티 브로커 전체 자산 대시보드용 통합 진입점입니다.",
+    inputSchema: z.object({
+      brokerIds: brokerIdsSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ brokerIds, debug, forceRefresh, headless }) => {
+    try {
+      const targetBrokerIds = resolveBrokerIds(brokerIds);
+      const settled = await Promise.all(
+        targetBrokerIds.map(async (brokerId) => {
+          try {
+            return {
+              ok: true as const,
+              brokerId,
+              summary: await fetchNormalizedAssetSummaryForBroker(brokerId, {
+                debug,
+                forceRefresh,
+                ...(headless !== undefined ? { headless } : {}),
+              }),
+            };
+          } catch (error) {
+            return {
+              ok: false as const,
+              brokerId,
+              message: getErrorMessage(error),
+            };
+          }
+        }),
+      );
+
+      const summaries = settled
+        .filter((result) => result.ok)
+        .map((result) => result.summary);
+      const failures = settled
+        .filter((result) => !result.ok)
+        .map((result) => ({
+          brokerId: result.brokerId,
+          message: result.message,
+        }));
+
+      return toToolResult({
+        requestedBrokerIds: targetBrokerIds,
+        successBrokerIds: summaries.map((item) => item.brokerId),
+        failedBrokerIds: failures.map((item) => item.brokerId),
+        brokerCount: targetBrokerIds.length,
+        successCount: summaries.length,
+        failureCount: failures.length,
+        totals: {
+          totalAssetValue: summaries.reduce(
+            (sum, item) => sum + (item.totalAssetValue ?? 0),
+            0,
+          ),
+          investmentAmountValue: summaries.reduce(
+            (sum, item) => sum + (item.investmentAmountValue ?? 0),
+            0,
+          ),
+          evaluationAmountValue: summaries.reduce(
+            (sum, item) => sum + (item.evaluationAmountValue ?? 0),
+            0,
+          ),
+          withdrawableAmountValue: summaries.reduce(
+            (sum, item) => sum + (item.withdrawableAmountValue ?? 0),
+            0,
+          ),
+          profitLossValue: summaries.reduce(
+            (sum, item) => sum + (item.profitLossValue ?? 0),
+            0,
+          ),
+        },
+        summaries,
+        failures,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_all_holdings",
+  {
+    title: "Get All Holdings",
+    description:
+      "지원 중인 여러 증권사의 보유내역을 한 번에 정규화해서 반환합니다. 전체 포트폴리오 통합 조회용 툴입니다.",
+    inputSchema: z.object({
+      brokerIds: brokerIdsSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ brokerIds, debug, forceRefresh, headless }) => {
+    try {
+      const targetBrokerIds = resolveBrokerIds(brokerIds);
+      const settled = await Promise.all(
+        targetBrokerIds.map(async (brokerId) => {
+          try {
+            return {
+              ok: true as const,
+              brokerId,
+              response: await fetchNormalizedHoldingsForBroker(brokerId, {
+                allAccounts: true,
+                debug,
+                forceRefresh,
+                ...(headless !== undefined ? { headless } : {}),
+              }),
+            };
+          } catch (error) {
+            return {
+              ok: false as const,
+              brokerId,
+              message: getErrorMessage(error),
+            };
+          }
+        }),
+      );
+
+      const responses = settled.filter((result) => result.ok).map((result) => result.response);
+      const holdings = responses.flatMap((result) => result.holdings);
+      const failures = settled
+        .filter((result) => !result.ok)
+        .map((result) => ({
+          brokerId: result.brokerId,
+          message: result.message,
+        }));
+
+      return toToolResult({
+        requestedBrokerIds: targetBrokerIds,
+        successBrokerIds: responses.map((item) => item.brokerId),
+        failedBrokerIds: failures.map((item) => item.brokerId),
+        brokerCount: targetBrokerIds.length,
+        successCount: responses.length,
+        failureCount: failures.length,
+        totalCount: holdings.length,
+        categories: Array.from(new Set(holdings.map((item) => item.category))),
+        byBroker: Object.fromEntries(
+          responses.map((response) => [response.brokerId, response.holdings.length]),
+        ),
+        byCategory: countBy(holdings.map((item) => item.category)),
+        holdings,
+        brokerSnapshots: responses.map((response) => ({
+          brokerId: response.brokerId,
+          brokerName: response.brokerName,
+          capturedAt: response.capturedAt,
+          ...(response.requestedAccountNumber
+            ? { requestedAccountNumber: response.requestedAccountNumber }
+            : {}),
+          count: response.holdings.length,
+          byCategory: countBy(response.holdings.map((item) => item.category)),
+        })),
+        failures,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_all_transactions",
+  {
+    title: "Get All Transactions",
+    description:
+      "지원 중인 여러 증권사의 거래내역을 한 번에 정규화해서 반환합니다. 현재 미래에셋증권은 거래내역이 통합 대상에서 제외됩니다.",
+    inputSchema: z.object({
+      brokerIds: brokerIdsSchema,
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ brokerIds, startDate, endDate, debug, forceRefresh, headless }) => {
+    try {
+      const targetBrokerIds = resolveBrokerIds(brokerIds);
+      const skipped = targetBrokerIds.includes("miraeasset")
+        ? [
+            {
+              brokerId: "miraeasset" as const,
+              reason: "현재 미래에셋증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다.",
+            },
+          ]
+        : [];
+      const transactionBrokerIds = targetBrokerIds.filter(
+        (brokerId) => brokerId !== "miraeasset",
+      );
+
+      const settled = await Promise.all(
+        transactionBrokerIds.map(async (brokerId) => {
+          try {
+            return {
+              ok: true as const,
+              brokerId,
+              response: await fetchNormalizedTransactionsForBroker(brokerId, {
+                allAccounts: true,
+                ...(startDate ? { startDate } : {}),
+                ...(endDate ? { endDate } : {}),
+                debug,
+                forceRefresh,
+                ...(headless !== undefined ? { headless } : {}),
+              }),
+            };
+          } catch (error) {
+            return {
+              ok: false as const,
+              brokerId,
+              message: getErrorMessage(error),
+            };
+          }
+        }),
+      );
+
+      const responses = settled.filter((result) => result.ok).map((result) => result.response);
+      const transactions = responses.flatMap((result) => result.transactions);
+      const failures = settled
+        .filter((result) => !result.ok)
+        .map((result) => ({
+          brokerId: result.brokerId,
+          message: result.message,
+        }));
+
+      return toToolResult({
+        requestedBrokerIds: targetBrokerIds,
+        successBrokerIds: responses.map((item) => item.brokerId),
+        skippedBrokerIds: skipped.map((item) => item.brokerId),
+        failedBrokerIds: failures.map((item) => item.brokerId),
+        brokerCount: targetBrokerIds.length,
+        successCount: responses.length,
+        skippedCount: skipped.length,
+        failureCount: failures.length,
+        query: {
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+        },
+        totalCount: transactions.length,
+        sourceTypes: Array.from(new Set(transactions.map((item) => item.sourceType))),
+        byBroker: Object.fromEntries(
+          responses.map((response) => [response.brokerId, response.transactions.length]),
+        ),
+        bySourceType: countBy(transactions.map((item) => item.sourceType)),
+        byKind: countBy(
+          transactions.flatMap((item) => (item.kind ? [item.kind] : [])),
+        ),
+        byDirection: countBy(
+          transactions.flatMap((item) => (item.direction ? [item.direction] : [])),
         ),
         transactions,
+        brokerSnapshots: responses.map((response) => ({
+          brokerId: response.brokerId,
+          brokerName: response.brokerName,
+          capturedAt: response.capturedAt,
+          ...(response.requestedAccountNumber
+            ? { requestedAccountNumber: response.requestedAccountNumber }
+            : {}),
+          ...(response.query ? { query: response.query } : {}),
+          count: response.transactions.length,
+          sourceTypes: response.sourceTypes,
+          bySourceType: countBy(response.transactions.map((item) => item.sourceType)),
+          byKind: countBy(
+            response.transactions.flatMap((item) => (item.kind ? [item.kind] : [])),
+          ),
+          byDirection: countBy(
+            response.transactions.flatMap((item) =>
+              item.direction ? [item.direction] : []
+            ),
+          ),
+        })),
+        skipped,
+        failures,
       });
     } catch (error) {
       return toToolError(error);

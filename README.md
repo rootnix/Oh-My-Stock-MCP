@@ -80,6 +80,7 @@ docker run -i --rm \
 
 ## 주요 기능
 
+- 여러 증권사를 한 번에 묶어 조회하는 통합 툴 제공
 - 자산 스냅샷 조회
 - 계좌 목록 / 계좌 상세 조회
 - 보유주식 / 펀드 / 연금 / 외화자산 조회
@@ -242,6 +243,9 @@ Docker 실행 예시:
 
 ## 공통 normalized 툴
 
+- `get_all_assets`
+- `get_all_holdings`
+- `get_all_transactions`
 - `get_normalized_asset_summary`
 - `get_normalized_accounts`
 - `get_normalized_holdings`
@@ -260,6 +264,9 @@ Docker 실행 예시:
 - `list_brokers`
 - `get_broker_auth_status`
 - `get_asset_snapshot`
+- `get_all_assets`
+- `get_all_holdings`
+- `get_all_transactions`
 - `get_normalized_asset_summary`
 - `get_normalized_accounts`
 - `get_normalized_holdings`
