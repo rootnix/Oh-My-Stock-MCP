@@ -166,6 +166,8 @@ npm run auth:miraeasset
 
 > 현재 미래에셋은 자산/보유내역 중심으로 지원합니다. 거래내역 등 민감 페이지는 추가 인증이 필요합니다.
 
+> `get_all_transactions` 통합 조회에서는 미래에셋증권이 자동으로 제외됩니다.
+
 ### NH투자증권
 
 ```dotenv
@@ -256,6 +258,12 @@ Docker 실행 예시:
 - 자산 요약: `totalAssetRaw`, `totalAssetValue`, `profitLossRaw`, `profitLossValue`, `returnRateRaw`, `returnRateValue`
 - 보유내역: `category`, `productName`, `productCode`, `purchaseAmountValue`, `evaluationAmountValue`
 - 거래내역: `sourceType`, `kind`, `direction`, `assetCategory`
+
+aggregate 툴은 브로커별 상태를 함께 반환합니다:
+
+- `successBrokerIds`
+- `failedBrokerIds`
+- `skippedBrokerIds` (`get_all_transactions`에서 미래에셋증권 등 통합 제외 브로커 표시)
 
 ## 제공 툴
 
