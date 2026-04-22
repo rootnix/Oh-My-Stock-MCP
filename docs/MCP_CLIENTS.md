@@ -19,17 +19,20 @@ node /absolute/path/to/Oh-My-Stock-MCP/dist/index.js
 
 ### Docker 실행 방식
 
-```bash
-docker build -t oh-my-stock-mcp /absolute/path/to/Oh-My-Stock-MCP
-```
-
-실행 명령:
+공개 이미지 사용:
 
 ```bash
+docker pull ghcr.io/rootnix/oh-my-stock-mcp:latest
 docker run -i --rm \
   --env-file /absolute/path/to/Oh-My-Stock-MCP/.env \
   -v /absolute/path/to/Oh-My-Stock-MCP/.data:/app/.data \
-  oh-my-stock-mcp
+  ghcr.io/rootnix/oh-my-stock-mcp:latest
+```
+
+직접 빌드해서 쓰고 싶다면:
+
+```bash
+docker build -t oh-my-stock-mcp /absolute/path/to/Oh-My-Stock-MCP
 ```
 
 ---
@@ -50,7 +53,7 @@ codex mcp add oh-my-stock-mcp-docker -- \
   docker run -i --rm \
   --env-file /absolute/path/to/Oh-My-Stock-MCP/.env \
   -v /absolute/path/to/Oh-My-Stock-MCP/.data:/app/.data \
-  oh-my-stock-mcp
+  ghcr.io/rootnix/oh-my-stock-mcp:latest
 ```
 
 ---
@@ -85,7 +88,7 @@ Docker 사용 예시:
         "/absolute/path/to/Oh-My-Stock-MCP/.env",
         "-v",
         "/absolute/path/to/Oh-My-Stock-MCP/.data:/app/.data",
-        "oh-my-stock-mcp"
+        "ghcr.io/rootnix/oh-my-stock-mcp:latest"
       ]
     }
   }
@@ -119,7 +122,7 @@ Docker 예시:
       "/absolute/path/to/Oh-My-Stock-MCP/.env",
       "-v",
       "/absolute/path/to/Oh-My-Stock-MCP/.data:/app/.data",
-      "oh-my-stock-mcp"
+      "ghcr.io/rootnix/oh-my-stock-mcp:latest"
     ]
   }
 }

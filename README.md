@@ -84,6 +84,27 @@ npm run auth:shinhansec
 
 ## Docker 실행
 
+직접 빌드하지 않고 공개된 이미지를 바로 사용할 수 있습니다.
+
+### 공개 이미지 바로 사용
+
+이미지 다운로드:
+
+```bash
+docker pull ghcr.io/rootnix/oh-my-stock-mcp:latest
+```
+
+실행:
+
+```bash
+docker run -i --rm \
+  --env-file .env \
+  -v "$(pwd)/.data:/app/.data" \
+  ghcr.io/rootnix/oh-my-stock-mcp:latest
+```
+
+### 소스에서 직접 빌드해서 사용
+
 이미지 빌드:
 
 ```bash
@@ -128,7 +149,7 @@ docker run -i --rm \
       "/absolute/path/to/Oh-My-Stock-MCP/.env",
       "-v",
       "/absolute/path/to/Oh-My-Stock-MCP/.data:/app/.data",
-      "oh-my-stock-mcp"
+      "ghcr.io/rootnix/oh-my-stock-mcp:latest"
     ]
   }
 }
