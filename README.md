@@ -2,30 +2,28 @@
 
 한국 증권사 웹사이트에서 자산, 계좌, 보유종목, 거래내역을 읽어오는 로컬 MCP 서버입니다.
 
-- GitHub: https://github.com/rootnix/Oh-My-Stock-MCP
-- 현재 지원:
-  - `samsungpop` — 삼성증권
-  - `shinhansec` — 신한투자증권
+현재 지원:
 
-## 지원 기능
+- `samsungpop` — 삼성증권
+- `shinhansec` — 신한투자증권
 
-- 브로커별 자산 스냅샷
-- 계좌 목록 / 계좌 상세
-- 보유종목 / 펀드 / 연금 / 외화자산
-- 거래내역 / 입출금 / 일부 금융상품 거래내역
-- 브로커 공통 normalized 응답
+## 주요 기능
+
+- 자산 스냅샷 조회
+- 계좌 목록 / 계좌 상세 조회
+- 보유주식 / 펀드 / 연금 / 외화자산 조회
+- 거래내역 / 입출금 / 일부 금융상품 거래내역 조회
+- 브로커 공통 normalized 응답 제공
 - stdio 기반 MCP 서버
 
 ## 주의사항
 
-- 본 프로젝트는 **개인 계정의 증권 정보**를 다룹니다.
-- `.env`, `.data/sessions`, 저장된 브라우저 세션 파일은 절대 공개 저장소에 올리면 안 됩니다.
-- 증권사 웹사이트 구조가 바뀌면 일부 기능이 깨질 수 있습니다.
-- 사용 전 각 증권사 약관, 보안 정책, 자동화 정책을 직접 확인하세요.
+- 이 프로젝트는 개인 금융정보를 다룹니다.
+- `.env`, `.data/sessions` 등 인증정보가 담긴 파일은 절대 공유하지 마세요.
+- 증권사 웹사이트 구조 변경에 따라 일부 기능이 깨질 수 있습니다.
+- 사용 전 각 증권사의 이용약관/보안정책을 직접 확인하세요.
 
-## 빠른 시작
-
-### 로컬 실행
+## 로컬 실행
 
 ```bash
 npm install
@@ -41,8 +39,6 @@ npm run dev
 
 ## 계정 설정
 
-`.env.example`을 복사해서 `.env`를 만듭니다.
-
 ```bash
 cp .env.example .env
 ```
@@ -54,8 +50,6 @@ cp .env.example .env
 ```dotenv
 SAMSUNGPOP_AUTH_MODE=manual_session
 ```
-
-세션 저장:
 
 ```bash
 npm run auth:samsungpop
@@ -73,6 +67,8 @@ SAMSUNGPOP_ACCOUNT_NUMBER_HINT=12345678
 
 ### 신한투자증권
 
+자동 로그인:
+
 ```dotenv
 SHINHANSEC_AUTH_MODE=credentials
 SHINHANSEC_USER_ID=...
@@ -80,23 +76,21 @@ SHINHANSEC_USER_PASSWORD=...
 SHINHANSEC_ACCOUNT_PASSWORD=1234
 ```
 
-수동 세션 저장도 가능:
+수동 세션 저장:
 
 ```bash
 npm run auth:shinhansec
 ```
 
-## Docker
+## Docker 실행
 
-이 프로젝트는 Playwright를 사용하므로, Docker 이미지는 브라우저 런타임이 포함된 환경에서 실행됩니다.
-
-### 이미지 빌드
+이미지 빌드:
 
 ```bash
 docker build -t oh-my-stock-mcp .
 ```
 
-### Docker로 MCP 서버 실행
+실행:
 
 ```bash
 docker run -i --rm \
@@ -105,41 +99,11 @@ docker run -i --rm \
   oh-my-stock-mcp
 ```
 
-설명:
+## MCP 클라이언트 설정 예시
 
-- `-i`: MCP stdio 통신용
-- `--env-file .env`: 브로커 로그인 설정 전달
-- `-v "$(pwd)/.data:/app/.data"`: 세션/캐시 보존
+자세한 예시는 [`docs/MCP_CLIENTS.md`](docs/MCP_CLIENTS.md) 참고.
 
-### Docker 사용 시 권장 사항
-
-- 삼성증권 수동 세션은 호스트에서 먼저 만든 뒤 `.data`를 마운트해서 재사용하는 방식이 가장 안정적입니다.
-- 신한투자증권은 credential 기반 자동 로그인이 상대적으로 Docker 친화적입니다.
-
-## MCP 클라이언트 연결 예시
-
-### Codex CLI
-
-로컬 Node 실행:
-
-```bash
-codex mcp add oh-my-stock-mcp -- \
-  zsh -lc 'cd /absolute/path/to/Oh-My-Stock-MCP && node dist/index.js'
-```
-
-Docker 실행:
-
-```bash
-codex mcp add oh-my-stock-mcp-docker -- \
-  docker run -i --rm \
-  --env-file /absolute/path/to/Oh-My-Stock-MCP/.env \
-  -v /absolute/path/to/Oh-My-Stock-MCP/.data:/app/.data \
-  oh-my-stock-mcp
-```
-
-### 일반 MCP JSON 예시
-
-로컬 실행:
+간단한 로컬 Node 실행 예시:
 
 ```json
 {
@@ -150,7 +114,7 @@ codex mcp add oh-my-stock-mcp-docker -- \
 }
 ```
 
-Docker 실행:
+간단한 Docker 실행 예시:
 
 ```json
 {
@@ -169,6 +133,29 @@ Docker 실행:
   }
 }
 ```
+
+## 공통 normalized 툴
+
+- `get_normalized_asset_summary`
+- `get_normalized_accounts`
+- `get_normalized_holdings`
+- `get_normalized_transactions`
+
+주요 필드:
+
+- 자산 요약:
+  - `totalAssetRaw`, `totalAssetValue`
+  - `profitLossRaw`, `profitLossValue`
+  - `returnRateRaw`, `returnRateValue`
+- 보유내역:
+  - `category`
+  - `productName`, `productCode`
+  - `purchaseAmountValue`, `evaluationAmountValue`
+- 거래내역:
+  - `sourceType`
+  - `kind`
+  - `direction`
+  - `assetCategory`
 
 ## 제공 툴
 
@@ -227,72 +214,12 @@ Docker 실행:
 - `get_shinhansec_cash_transactions`
 - `get_shinhansec_deep_snapshot`
 
-## normalized 응답
-
-브로커별 원본 스키마는 다르기 때문에, 대시보드/에이전트에서 공통 처리하려면 아래 툴을 권장합니다.
-
-- `get_normalized_asset_summary`
-- `get_normalized_accounts`
-- `get_normalized_holdings`
-- `get_normalized_transactions`
-
-주요 필드:
-
-- 자산 요약:
-  - `totalAssetRaw`, `totalAssetValue`
-  - `profitLossRaw`, `profitLossValue`
-  - `returnRateRaw`, `returnRateValue`
-- 보유내역:
-  - `category`
-  - `productName`, `productCode`
-  - `purchaseAmountValue`, `evaluationAmountValue`
-- 거래내역:
-  - `sourceType`
-  - `kind`
-  - `direction`
-  - `assetCategory`
-
 ## 다음 증권사 추가
-
-새 브로커를 추가할 때 기본 흐름:
 
 1. `src/brokers/<broker-id>/adapter.ts` 작성
 2. `src/config.ts`, `src/brokers/registry.ts` 연결
 3. 필요 시 `src/index.ts`에 브로커 전용 툴 추가
 4. `src/lib/normalize.ts`에 normalized 매퍼 추가
-
-## GitHub 공개 절차
-
-이 저장소는 아래 원격으로 공개 예정:
-
-```bash
-https://github.com/rootnix/Oh-My-Stock-MCP.git
-```
-
-예시:
-
-```bash
-git init
-git branch -M main
-git remote add origin https://github.com/rootnix/Oh-My-Stock-MCP.git
-git add .
-git commit -m "Initial public release"
-git push -u origin main
-```
-
-## GHCR로 Docker 이미지 배포
-
-이미지를 GitHub Container Registry에 올리면 사용자는 아래처럼 바로 실행할 수 있습니다.
-
-```bash
-docker pull ghcr.io/rootnix/oh-my-stock-mcp:latest
-docker run -i --rm \
-  --env-file .env \
-  -v "$(pwd)/.data:/app/.data" \
-  ghcr.io/rootnix/oh-my-stock-mcp:latest
-```
-
-현재 저장소에는 GHCR 배포용 GitHub Actions 워크플로도 포함되어 있습니다.
 
 ## 라이선스
 
