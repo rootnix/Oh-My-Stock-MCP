@@ -526,6 +526,7 @@ export class KorSecBroker implements BrokerAdapter {
   private readonly storage: StorageStateStore;
   private apiRequestQueue: Promise<void> = Promise.resolve();
   private lastApiRequestAt = 0;
+  private tokenIssuePromise: Promise<KorSecApiTokenCache> | undefined;
 
   constructor(private readonly config: AppConfig) {
     this.storage = new StorageStateStore(config.korsec.storageStatePath);
@@ -1769,55 +1770,71 @@ export class KorSecBroker implements BrokerAdapter {
       }
     }
 
-    const response = await fetch(OPEN_API_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json;charset=UTF-8",
-        "User-Agent": HTTP_USER_AGENT,
-      },
-      body: JSON.stringify({
-        grant_type: "client_credentials",
-        appkey: this.config.korsec.appKey,
-        appsecret: this.config.korsec.secretKey,
-      }),
-    });
-    const rawText = await response.text();
-    let payload: Record<string, unknown> = {};
+    if (this.tokenIssuePromise) {
+      return this.tokenIssuePromise;
+    }
+
+    const issuePromise = (async (): Promise<KorSecApiTokenCache> => {
+      const response = await fetch(OPEN_API_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json;charset=UTF-8",
+          "User-Agent": HTTP_USER_AGENT,
+        },
+        body: JSON.stringify({
+          grant_type: "client_credentials",
+          appkey: this.config.korsec.appKey,
+          appsecret: this.config.korsec.secretKey,
+        }),
+      });
+      const rawText = await response.text();
+      let payload: Record<string, unknown> = {};
+
+      try {
+        payload = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
+      } catch {
+        payload = {};
+      }
+
+      if (!response.ok) {
+        throw new UserVisibleError(
+          [
+            "한국투자증권 OpenAPI 토큰 발급에 실패했습니다.",
+            typeof payload.error_description === "string" ? payload.error_description : rawText,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
+
+      const accessToken =
+        typeof payload.access_token === "string" ? payload.access_token : undefined;
+
+      if (!accessToken) {
+        throw new UserVisibleError("한국투자증권 OpenAPI 토큰 응답에 access_token 이 없습니다.");
+      }
+
+      const cache: KorSecApiTokenCache = {
+        accessToken,
+        ...(typeof payload.access_token_token_expired === "string"
+          ? { expiresAt: payload.access_token_token_expired }
+          : {}),
+        savedAt: new Date().toISOString(),
+      };
+
+      await this.writeTokenCache(cache);
+      return cache;
+    })();
+
+    this.tokenIssuePromise = issuePromise;
 
     try {
-      payload = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
-    } catch {
-      payload = {};
+      return await issuePromise;
+    } finally {
+      if (this.tokenIssuePromise === issuePromise) {
+        this.tokenIssuePromise = undefined;
+      }
     }
-
-    if (!response.ok) {
-      throw new UserVisibleError(
-        [
-          "한국투자증권 OpenAPI 토큰 발급에 실패했습니다.",
-          typeof payload.error_description === "string" ? payload.error_description : rawText,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      );
-    }
-
-    const accessToken =
-      typeof payload.access_token === "string" ? payload.access_token : undefined;
-
-    if (!accessToken) {
-      throw new UserVisibleError("한국투자증권 OpenAPI 토큰 응답에 access_token 이 없습니다.");
-    }
-
-    const cache: KorSecApiTokenCache = {
-      accessToken,
-      ...(typeof payload.access_token_token_expired === "string"
-        ? { expiresAt: payload.access_token_token_expired }
-        : {}),
-      savedAt: new Date().toISOString(),
-    };
-
-    await this.writeTokenCache(cache);
-    return cache;
   }
 
   private async resolveApiAccount(): Promise<{

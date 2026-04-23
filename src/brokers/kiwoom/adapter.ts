@@ -134,6 +134,13 @@ function ensureReturnCode(
   throw new UserVisibleError(payload.return_msg ?? fallbackMessage);
 }
 
+function isInvalidTokenPayload(payload: KiwoomApiResponse): boolean {
+  return (
+    payload.return_code === 8005 ||
+    payload.return_msg?.includes("Token이 유효하지 않습니다") === true
+  );
+}
+
 function parseDateDigits(value?: string): Date | undefined {
   if (!value || !/^\d{14}$/u.test(value)) {
     return undefined;
@@ -305,6 +312,14 @@ export class KiwoomBroker implements BrokerAdapter {
     }
 
     const payload = (await response.json()) as T;
+
+    if (isInvalidTokenPayload(payload) && !options.forceRefreshToken) {
+      return this.callTr<T>(apiId, body, {
+        ...options,
+        forceRefreshToken: true,
+      });
+    }
+
     ensureReturnCode(payload, `키움 API 요청이 실패했습니다 (${apiId}).`);
 
     const contYn = response.headers.get("cont-yn") ?? undefined;
