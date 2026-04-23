@@ -1676,11 +1676,17 @@ server.registerTool(
           const transactionResponse = transactionResponses.find(
             (item) => item.brokerId === brokerId,
           );
+          const resolvedBrokerName =
+            summary?.brokerName ??
+            accountResponse?.accounts[0]?.brokerName ??
+            holdingResponse?.holdings[0]?.brokerName ??
+            transactionResponse?.transactions[0]?.brokerName ??
+            registry[brokerId].name;
 
           return [
             brokerId,
             {
-              brokerName: registry[brokerId].name,
+              brokerName: resolvedBrokerName,
               totalAssetValue: summary?.totalAssetValue,
               profitLossValue: summary?.profitLossValue,
               accountCount: accountResponse?.accounts.length ?? 0,
