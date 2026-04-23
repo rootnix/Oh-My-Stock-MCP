@@ -583,6 +583,7 @@ export class SamsungPopBroker implements BrokerAdapter {
   readonly name = "Samsung Securities POP";
 
   private readonly storage: StorageStateStore;
+  private sessionRefreshPromise: Promise<void> | undefined;
 
   constructor(private readonly config: AppConfig) {
     this.storage = new StorageStateStore(config.samsungpop.storageStatePath);
@@ -1276,53 +1277,93 @@ export class SamsungPopBroker implements BrokerAdapter {
     options: FetchBrokerAssetsOptions,
     handler: (page: Page, browserSession: BrowserSession) => Promise<T>,
   ): Promise<T> {
-    const useSavedSession =
-      !options.forceRefresh && (await this.storage.exists());
-    const browserOptions = {
-      ...(options.headless !== undefined ? { headless: options.headless } : {}),
-      ...(useSavedSession ? { storageStatePath: this.storage.filePath } : {}),
+    const tryWithSession = async (
+      storageStatePath?: string,
+    ): Promise<{ ok: true; value: T } | { ok: false }> => {
+      const browserSession = await createBrowserSession(this.config, {
+        ...(options.headless !== undefined ? { headless: options.headless } : {}),
+        ...(storageStatePath ? { storageStatePath } : {}),
+      });
+
+      try {
+        const page = await browserSession.context.newPage();
+        const authenticated = await this.tryOpenProtectedPath(page, targetUrl);
+
+        if (!authenticated) {
+          return { ok: false };
+        }
+
+        await this.dismissBlockingLayers(page);
+        return { ok: true, value: await handler(page, browserSession) };
+      } finally {
+        await browserSession.close();
+      }
     };
 
-    const browserSession = await createBrowserSession(
-      this.config,
-      browserOptions,
-    );
+    const hasSavedSession = await this.storage.exists();
 
-    try {
-      const page = await browserSession.context.newPage();
-      await this.ensureAuthenticated(page, targetUrl);
-      return await handler(page, browserSession);
-    } finally {
-      await browserSession.close();
-    }
-  }
+    if (!options.forceRefresh && hasSavedSession) {
+      const result = await tryWithSession(this.storage.filePath);
 
-  private async ensureAuthenticated(page: Page, targetUrl: string): Promise<void> {
-    let authenticated = await this.tryOpenProtectedPath(page, targetUrl);
-
-    if (!authenticated) {
-      if (this.hasCredentialSet()) {
-        await this.loginWithCredentials(page);
-        await this.storage.save(page.context());
-        authenticated = await this.tryOpenProtectedPath(page, targetUrl);
-      } else if (await this.storage.exists()) {
-        throw new UserVisibleError(
-          "저장된 삼성증권 세션이 만료되었거나 유효하지 않습니다. `npm run auth:samsungpop` 으로 세션을 다시 저장해 주세요.",
-        );
-      } else {
-        throw new UserVisibleError(
-          "삼성증권 인증 정보가 없습니다. 권장 방식은 `npm run auth:samsungpop` 으로 브라우저 세션을 저장하는 것입니다.",
-        );
+      if (result.ok) {
+        return result.value;
       }
     }
 
-    if (!authenticated) {
+    if (!this.hasCredentialSet()) {
+      if (hasSavedSession) {
+        throw new UserVisibleError(
+          "저장된 삼성증권 세션이 만료되었거나 유효하지 않습니다. `npm run auth:samsungpop` 으로 세션을 다시 저장해 주세요.",
+        );
+      }
+
       throw new UserVisibleError(
-        "삼성증권 페이지 인증에 실패했습니다. 세션 설정 또는 계정 정보를 다시 확인해 주세요.",
+        "삼성증권 인증 정보가 없습니다. 권장 방식은 `npm run auth:samsungpop` 으로 브라우저 세션을 저장하는 것입니다.",
       );
     }
 
-    await this.dismissBlockingLayers(page);
+    await this.refreshStoredSession(options);
+    const refreshed = await tryWithSession(this.storage.filePath);
+
+    if (refreshed.ok) {
+      return refreshed.value;
+    }
+
+    throw new UserVisibleError(
+      "삼성증권 페이지 인증에 실패했습니다. 세션 설정 또는 계정 정보를 다시 확인해 주세요.",
+    );
+  }
+
+  private async refreshStoredSession(
+    options: FetchBrokerAssetsOptions,
+  ): Promise<void> {
+    if (this.sessionRefreshPromise) {
+      return this.sessionRefreshPromise;
+    }
+
+    const refreshPromise = (async (): Promise<void> => {
+      const browserSession = await createBrowserSession(this.config, {
+        ...(options.headless !== undefined ? { headless: options.headless } : {}),
+      });
+
+      try {
+        const page = await browserSession.context.newPage();
+        await this.loginWithCredentials(page);
+        await this.storage.save(page.context());
+      } finally {
+        await browserSession.close();
+      }
+    })();
+
+    this.sessionRefreshPromise = refreshPromise;
+
+    try {
+      await refreshPromise;
+    } finally {
+      if (this.sessionRefreshPromise === refreshPromise) {
+        this.sessionRefreshPromise = undefined;
+      }
+    }
   }
 
   private async openProtectedPath(page: Page, targetUrl: string): Promise<void> {

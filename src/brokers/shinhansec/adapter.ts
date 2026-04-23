@@ -365,6 +365,7 @@ export class ShinhanSecBroker implements BrokerAdapter {
   readonly name = "Shinhan Securities";
 
   private readonly storage: StorageStateStore;
+  private sessionRefreshPromise: Promise<void> | undefined;
 
   constructor(private readonly config: AppConfig) {
     this.storage = new StorageStateStore(config.shinhansec.storageStatePath);
@@ -2755,45 +2756,92 @@ export class ShinhanSecBroker implements BrokerAdapter {
     options: FetchBrokerAssetsOptions,
     handler: (page: Page, browserSession: BrowserSession) => Promise<T>,
   ): Promise<T> {
-    const useSavedSession =
-      !options.forceRefresh && (await this.storage.exists());
-    const browserOptions = {
-      ...(options.headless !== undefined ? { headless: options.headless } : {}),
-      ...(useSavedSession ? { storageStatePath: this.storage.filePath } : {}),
+    const tryWithSession = async (
+      storageStatePath?: string,
+    ): Promise<{ ok: true; value: T } | { ok: false }> => {
+      const browserSession = await createBrowserSession(this.config, {
+        ...(options.headless !== undefined ? { headless: options.headless } : {}),
+        ...(storageStatePath ? { storageStatePath } : {}),
+      });
+
+      try {
+        const page = await browserSession.context.newPage();
+        const authenticated = await this.tryOpenProtectedPath(page, targetUrl);
+
+        if (!authenticated) {
+          return { ok: false };
+        }
+
+        return { ok: true, value: await handler(page, browserSession) };
+      } finally {
+        await browserSession.close();
+      }
     };
-    const browserSession = await createBrowserSession(this.config, browserOptions);
 
-    try {
-      const page = await browserSession.context.newPage();
-      await this.ensureAuthenticated(page, targetUrl);
-      return await handler(page, browserSession);
-    } finally {
-      await browserSession.close();
-    }
-  }
+    const hasSavedSession = await this.storage.exists();
 
-  private async ensureAuthenticated(page: Page, targetUrl: string): Promise<void> {
-    let authenticated = await this.tryOpenProtectedPath(page, targetUrl);
+    if (!options.forceRefresh && hasSavedSession) {
+      const result = await tryWithSession(this.storage.filePath);
 
-    if (!authenticated && this.hasCredentialSet()) {
-      await this.loginWithCredentials(page);
-      await this.storage.save(page.context());
-      authenticated = await this.tryOpenProtectedPath(page, targetUrl);
+      if (result.ok) {
+        return result.value;
+      }
     }
 
-    if (authenticated) {
-      return;
-    }
+    if (!this.hasCredentialSet()) {
+      if (hasSavedSession) {
+        throw new UserVisibleError(
+          "저장된 신한투자증권 세션이 만료되었거나 유효하지 않습니다. `npm run auth:shinhansec` 으로 세션을 다시 저장해 주세요.",
+        );
+      }
 
-    if (await this.storage.exists()) {
       throw new UserVisibleError(
-        "저장된 신한투자증권 세션이 만료되었거나 유효하지 않습니다. `npm run auth:shinhansec` 으로 세션을 다시 저장해 주세요.",
+        "신한투자증권 인증 정보가 없습니다. `npm run auth:shinhansec` 으로 브라우저 세션을 먼저 저장해 주세요.",
       );
     }
 
+    await this.refreshStoredSession(options);
+    const refreshed = await tryWithSession(this.storage.filePath);
+
+    if (refreshed.ok) {
+      return refreshed.value;
+    }
+
     throw new UserVisibleError(
-      "신한투자증권 인증 정보가 없습니다. `npm run auth:shinhansec` 으로 브라우저 세션을 먼저 저장해 주세요.",
+      "신한투자증권 페이지 인증에 실패했습니다. 세션 설정 또는 계정 정보를 다시 확인해 주세요.",
     );
+  }
+
+  private async refreshStoredSession(
+    options: FetchBrokerAssetsOptions,
+  ): Promise<void> {
+    if (this.sessionRefreshPromise) {
+      return this.sessionRefreshPromise;
+    }
+
+    const refreshPromise = (async (): Promise<void> => {
+      const browserSession = await createBrowserSession(this.config, {
+        ...(options.headless !== undefined ? { headless: options.headless } : {}),
+      });
+
+      try {
+        const page = await browserSession.context.newPage();
+        await this.loginWithCredentials(page);
+        await this.storage.save(page.context());
+      } finally {
+        await browserSession.close();
+      }
+    })();
+
+    this.sessionRefreshPromise = refreshPromise;
+
+    try {
+      await refreshPromise;
+    } finally {
+      if (this.sessionRefreshPromise === refreshPromise) {
+        this.sessionRefreshPromise = undefined;
+      }
+    }
   }
 
   private hasCredentialSet(): boolean {
