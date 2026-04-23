@@ -3231,6 +3231,34 @@ server.registerTool(
 );
 
 server.registerTool(
+  "get_korsec_product_balances",
+  {
+    title: "Get Korea Investment Product Balances",
+    description:
+      "한국투자증권 자산현황(종합잔고평가)의 상품유형별 잔고 요약을 전체 카테고리 기준으로 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getKorSecBroker();
+      return toToolResult(
+        await broker.fetchProductBalances({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
   "get_korsec_accounts",
   {
     title: "Get Korea Investment Accounts",

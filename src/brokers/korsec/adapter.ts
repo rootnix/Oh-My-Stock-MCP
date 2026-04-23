@@ -20,6 +20,9 @@ import type {
   KorSecBalanceCategory,
   KorSecDeepSnapshot,
   KorSecPageSnapshot,
+  KorSecProductBalanceCategorySnapshot,
+  KorSecProductBalanceRecord,
+  KorSecProductBalancesSnapshot,
 } from "../../types.js";
 import type {
   BrokerAdapter,
@@ -62,6 +65,10 @@ function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/gu, " ").trim();
 }
 
+function extractKorSecAccountNumber(value: string | undefined): string | undefined {
+  return value?.match(/\d{8}-\d{2}/u)?.[0];
+}
+
 function cleanSummaryValue(value: string | undefined): string | undefined {
   const normalized = normalizeText(value);
 
@@ -80,6 +87,27 @@ function cleanSummaryValue(value: string | undefined): string | undefined {
 
 function textIncludesAny(text: string, candidates: string[]): boolean {
   return candidates.some((candidate) => text.includes(candidate));
+}
+
+function rowToRecord(headers: string[], row: string[]): Record<string, string> {
+  return Object.fromEntries(
+    headers.map((header, index) => [normalizeText(header), normalizeText(row[index])]),
+  );
+}
+
+function findRecordValue(
+  record: Record<string, string>,
+  candidates: string[],
+): string | undefined {
+  for (const candidate of candidates) {
+    const entry = Object.entries(record).find(([key]) => key.includes(candidate));
+
+    if (entry?.[1]) {
+      return entry[1];
+    }
+  }
+
+  return undefined;
 }
 
 function pickFromTables(
@@ -129,6 +157,93 @@ function pickFromTables(
   }
 
   return undefined;
+}
+
+function parseKorSecProductBalanceRecord(
+  headers: string[],
+  row: string[],
+): KorSecProductBalanceRecord | undefined {
+  if (!headers.length || !row.length) {
+    return undefined;
+  }
+
+  const normalizedRow = row.map((value) => normalizeText(value));
+  const joinedRow = normalizedRow.join(" ");
+  const normalizedHeaders = headers.map((header) => normalizeText(header));
+  const nonEmptyCells = normalizedRow.filter(Boolean);
+
+  if (
+    !joinedRow ||
+    joinedRow.includes("조회된 데이터가 없습니다.") ||
+    joinedRow === normalizedHeaders.join(" ") ||
+    (nonEmptyCells.length > 0 &&
+      nonEmptyCells.every((cell) => normalizedHeaders.includes(cell)))
+  ) {
+    return undefined;
+  }
+
+  const record = rowToRecord(headers, normalizedRow);
+  const accountValue = findRecordValue(record, ["계좌번호", "랩계좌번호", "계좌"]);
+  const accountNumber = extractKorSecAccountNumber(accountValue);
+
+  if (accountValue === "합계" || accountNumber === "합계") {
+    return undefined;
+  }
+
+  const productName = findRecordValue(record, ["펀드명", "종목명", "상품명"]);
+  const quantity = findRecordValue(record, ["잔고좌수", "보유수량", "수량"]);
+  const depositAmount = findRecordValue(record, ["예수금"]);
+  const purchaseAmount = findRecordValue(record, ["매입금액"]);
+  const evaluationAmount = findRecordValue(record, ["세전평가금액", "평가금액"]);
+  const profitLoss = findRecordValue(record, ["손익금액", "손익"]);
+  const returnRate = findRecordValue(record, ["수익률(%)", "수익률"]);
+  const annualizedReturnRate = findRecordValue(record, [
+    "연환산수익률(%)",
+    "연환산 수익률(%)",
+  ]);
+  const weight = findRecordValue(record, ["비율(%)", "비율"]);
+  const openedAt = findRecordValue(record, ["신규일"]);
+  const maturityDate = findRecordValue(record, ["만기일", "환매제한일"]);
+  const redeemable = findRecordValue(record, ["환매여부"]);
+  const accountType = findRecordValue(record, ["계좌유형"]);
+
+  const hasMeaningfulValue = [
+    accountNumber,
+    productName,
+    quantity,
+    depositAmount,
+    purchaseAmount,
+    evaluationAmount,
+    profitLoss,
+    returnRate,
+    annualizedReturnRate,
+    weight,
+    openedAt,
+    maturityDate,
+    redeemable,
+  ].some(Boolean);
+
+  if (!hasMeaningfulValue) {
+    return undefined;
+  }
+
+  return {
+    ...(accountNumber ? { accountNumber, displayAccountNumber: accountNumber } : {}),
+    ...(accountType ? { accountType } : {}),
+    ...(productName ? { productName } : {}),
+    ...(quantity ? { quantity } : {}),
+    ...(depositAmount ? { depositAmount } : {}),
+    ...(purchaseAmount ? { purchaseAmount } : {}),
+    ...(evaluationAmount ? { evaluationAmount } : {}),
+    ...(profitLoss ? { profitLoss } : {}),
+    ...(returnRate ? { returnRate } : {}),
+    ...(annualizedReturnRate ? { annualizedReturnRate } : {}),
+    ...(weight ? { weight } : {}),
+    ...(openedAt ? { openedAt } : {}),
+    ...(maturityDate ? { maturityDate } : {}),
+    ...(redeemable ? { redeemable } : {}),
+    raw: record,
+  };
 }
 
 function extractSummaryFromPages(
@@ -336,6 +451,7 @@ export class KorSecBroker implements BrokerAdapter {
         ),
       ),
     ) as Partial<Record<KorSecBalanceCategory, KorSecPageSnapshot>>;
+    const productBalances = this.buildProductBalancesSnapshot(balanceCategories);
 
     return {
       brokerId: "korsec",
@@ -344,7 +460,25 @@ export class KorSecBroker implements BrokerAdapter {
       assetSummary,
       generalBalance,
       balanceCategories,
+      productBalances,
     };
+  }
+
+  async fetchProductBalances(
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<KorSecProductBalancesSnapshot> {
+    const balanceCategories = Object.fromEntries(
+      await Promise.all(
+        (Object.keys(KORSEC_BALANCE_CATEGORY_MAP) as KorSecBalanceCategory[]).map(
+          async (category) => [
+            category,
+            await this.fetchBalanceCategory(category, options),
+          ],
+        ),
+      ),
+    ) as Partial<Record<KorSecBalanceCategory, KorSecPageSnapshot>>;
+
+    return this.buildProductBalancesSnapshot(balanceCategories);
   }
 
   async fetchBalanceCategory(
@@ -752,6 +886,58 @@ export class KorSecBroker implements BrokerAdapter {
     } finally {
       await browserSession.close().catch(() => undefined);
     }
+  }
+
+  private buildProductBalancesSnapshot(
+    balanceCategories: Partial<Record<KorSecBalanceCategory, KorSecPageSnapshot>>,
+  ): KorSecProductBalancesSnapshot {
+    const categories = (Object.keys(KORSEC_BALANCE_CATEGORY_MAP) as KorSecBalanceCategory[]).map(
+      (category) =>
+        this.parseProductBalanceCategory(
+          category,
+          balanceCategories[category],
+        ),
+    );
+
+    return {
+      brokerId: "korsec",
+      brokerName: this.name,
+      capturedAt: new Date().toISOString(),
+      categories,
+      totals: {
+        categoryCount: categories.length,
+        nonEmptyCategoryCount: categories.filter((item) => item.recordCount > 0).length,
+        recordCount: categories.reduce(
+          (total, item) => total + item.recordCount,
+          0,
+        ),
+      },
+    };
+  }
+
+  private parseProductBalanceCategory(
+    category: KorSecBalanceCategory,
+    snapshot?: KorSecPageSnapshot,
+  ): KorSecProductBalanceCategorySnapshot {
+    const records =
+      snapshot?.tables.flatMap((table) =>
+        table.rows.flatMap((row) => {
+          const record = parseKorSecProductBalanceRecord(table.headers, row);
+          return record ? [record] : [];
+        }),
+      ) ?? [];
+
+    const totalEvaluationAmount = snapshot
+      ? pickFromTables(snapshot, ["평가금액"])
+      : undefined;
+
+    return {
+      category,
+      label: KORSEC_BALANCE_CATEGORY_MAP[category].label,
+      ...(totalEvaluationAmount ? { totalEvaluationAmount } : {}),
+      recordCount: records.length,
+      records,
+    };
   }
 
   private hasCredentialSet(): boolean {

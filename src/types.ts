@@ -964,6 +964,45 @@ export type KorSecPageSnapshot = {
   debugArtifacts?: DebugArtifacts;
 };
 
+export type KorSecProductBalanceRecord = {
+  accountNumber?: string;
+  displayAccountNumber?: string;
+  accountType?: string;
+  productName?: string;
+  quantity?: string;
+  depositAmount?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  annualizedReturnRate?: string;
+  weight?: string;
+  openedAt?: string;
+  maturityDate?: string;
+  redeemable?: string;
+  raw: Record<string, string>;
+};
+
+export type KorSecProductBalanceCategorySnapshot = {
+  category: KorSecBalanceCategory;
+  label: string;
+  totalEvaluationAmount?: string;
+  recordCount: number;
+  records: KorSecProductBalanceRecord[];
+};
+
+export type KorSecProductBalancesSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  categories: KorSecProductBalanceCategorySnapshot[];
+  totals: {
+    categoryCount: number;
+    nonEmptyCategoryCount: number;
+    recordCount: number;
+  };
+};
+
 export type KorSecDeepSnapshot = {
   brokerId: BrokerId;
   brokerName: string;
@@ -971,6 +1010,7 @@ export type KorSecDeepSnapshot = {
   assetSummary: KorSecPageSnapshot;
   generalBalance: KorSecPageSnapshot;
   balanceCategories: Partial<Record<KorSecBalanceCategory, KorSecPageSnapshot>>;
+  productBalances: KorSecProductBalancesSnapshot;
 };
 
 export type NhSecSummary = {

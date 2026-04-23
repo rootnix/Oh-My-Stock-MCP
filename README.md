@@ -379,6 +379,7 @@ aggregate 툴은 브로커별 상태를 함께 반환합니다:
 - `get_korsec_asset_summary`
 - `get_korsec_general_balance`
 - `get_korsec_balance_category`
+- `get_korsec_product_balances`
 - `get_korsec_accounts`
 - `get_korsec_holdings`
 - `get_korsec_deep_snapshot`
