@@ -1,4 +1,4 @@
-export type BrokerId = "samsungpop" | "shinhansec" | "miraeasset" | "nhsec";
+export type BrokerId = "samsungpop" | "shinhansec" | "miraeasset" | "nhsec" | "korsec";
 
 export type AuthMode = "manual_session" | "credentials";
 
@@ -927,6 +927,52 @@ export type MiraeAssetDeepSnapshot = {
   investmentReturn: MiraeAssetPageSnapshot;
 };
 
+
+export type KorSecSummary = {
+  ownerName?: string;
+  standardDate?: string;
+  totalAsset?: string;
+  investmentAmount?: string;
+  evaluationAmount?: string;
+  withdrawableAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  rawSummary: Record<string, string>;
+};
+
+export type KorSecBalanceCategory =
+  | "fund"
+  | "stock"
+  | "future_option"
+  | "wrap"
+  | "bond_els"
+  | "cd_cp_rp_issued_note"
+  | "gold_spot"
+  | "ima";
+
+export type KorSecPageSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  pageTitle: string;
+  pageUrl: string;
+  headings: string[];
+  keyValues: ExtractedKeyValue[];
+  tables: ExtractedTable[];
+  rawTextPreview: string;
+  summary?: KorSecSummary;
+  debugArtifacts?: DebugArtifacts;
+};
+
+export type KorSecDeepSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  assetSummary: KorSecPageSnapshot;
+  generalBalance: KorSecPageSnapshot;
+  balanceCategories: Partial<Record<KorSecBalanceCategory, KorSecPageSnapshot>>;
+};
+
 export type NhSecSummary = {
   ownerName?: string;
   standardDate?: string;
@@ -1434,6 +1480,17 @@ export type BrokerAssetSnapshot = {
     ownerName?: string;
     standardDate?: string;
     totalAsset?: string;
+    profitLoss?: string;
+    returnRate?: string;
+    rawSummary?: Record<string, string>;
+  };
+  korsecAssetAnalysis?: {
+    ownerName?: string;
+    standardDate?: string;
+    totalAsset?: string;
+    investmentAmount?: string;
+    evaluationAmount?: string;
+    withdrawableAmount?: string;
     profitLoss?: string;
     returnRate?: string;
     rawSummary?: Record<string, string>;

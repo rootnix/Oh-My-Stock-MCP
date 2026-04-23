@@ -49,6 +49,14 @@ export type AppConfig = {
     debugDir: string;
     loginTimeoutMs: number;
   };
+  korsec: {
+    authMode: AuthMode;
+    userId?: string;
+    password?: string;
+    storageStatePath: string;
+    debugDir: string;
+    loginTimeoutMs: number;
+  };
 };
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -91,6 +99,8 @@ export function loadConfig(): AppConfig {
   const miraeAssetPassword = cleanOptional(process.env.MIRAEASSET_USER_PASSWORD);
   const nhSecUserId = cleanOptional(process.env.NHSEC_USER_ID);
   const nhSecPassword = cleanOptional(process.env.NHSEC_USER_PASSWORD);
+  const korSecUserId = cleanOptional(process.env.KORSEC_USER_ID);
+  const korSecPassword = cleanOptional(process.env.KORSEC_USER_PASSWORD);
 
   return {
     rootDir,
@@ -137,6 +147,14 @@ export function loadConfig(): AppConfig {
       loginTimeoutMs: 90_000,
       ...(nhSecUserId ? { userId: nhSecUserId } : {}),
       ...(nhSecPassword ? { password: nhSecPassword } : {}),
+    },
+    korsec: {
+      authMode: parseAuthMode(process.env.KORSEC_AUTH_MODE),
+      storageStatePath: path.join(dataDir, "sessions", "korsec.storage.json"),
+      debugDir: path.join(dataDir, "debug", "korsec"),
+      loginTimeoutMs: 90_000,
+      ...(korSecUserId ? { userId: korSecUserId } : {}),
+      ...(korSecPassword ? { password: korSecPassword } : {}),
     },
   };
 }

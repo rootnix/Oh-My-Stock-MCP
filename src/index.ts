@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { KorSecBroker } from "./brokers/korsec/adapter.js";
 import { MiraeAssetBroker } from "./brokers/miraeasset/adapter.js";
 import { NhSecBroker } from "./brokers/nhsec/adapter.js";
 import { SamsungPopBroker } from "./brokers/samsungpop/adapter.js";
@@ -10,6 +11,9 @@ import { loadConfig } from "./config.js";
 import { createBrokerRegistry, getBrokerOrThrow } from "./brokers/registry.js";
 import { getErrorMessage } from "./lib/errors.js";
 import {
+  normalizeKorSecAccounts,
+  normalizeKorSecAssetSummary,
+  normalizeKorSecHoldings,
   normalizeMiraeAssetAccounts,
   normalizeMiraeAssetAssetSummary,
   normalizeMiraeAssetHoldings,
@@ -36,7 +40,7 @@ import type {
 const config = loadConfig();
 const registry = createBrokerRegistry(config);
 
-const brokerIdSchema = z.enum(["samsungpop", "shinhansec", "miraeasset", "nhsec"]);
+const brokerIdSchema = z.enum(["samsungpop", "shinhansec", "miraeasset", "nhsec", "korsec"]);
 const brokerIdsSchema = z.array(brokerIdSchema).min(1).optional();
 const shinhanFinancialTransactionCategorySchema = z.enum([
   "fund",
@@ -48,6 +52,16 @@ const shinhanFinancialTransactionCategorySchema = z.enum([
   "issued_note",
   "wrap",
   "plan_yes_overseas",
+]);
+const korsecBalanceCategorySchema = z.enum([
+  "fund",
+  "stock",
+  "future_option",
+  "wrap",
+  "bond_els",
+  "cd_cp_rp_issued_note",
+  "gold_spot",
+  "ima",
 ]);
 const optionalDateSchema = z
   .string()
@@ -93,6 +107,16 @@ function getNhSecBroker(): NhSecBroker {
 
   if (!(broker instanceof NhSecBroker)) {
     throw new Error("NH투자증권 브로커 인스턴스를 확인하지 못했습니다.");
+  }
+
+  return broker;
+}
+
+function getKorSecBroker(): KorSecBroker {
+  const broker = getBrokerOrThrow(registry, "korsec");
+
+  if (!(broker instanceof KorSecBroker)) {
+    throw new Error("한국투자증권 브로커 인스턴스를 확인하지 못했습니다.");
   }
 
   return broker;
@@ -173,13 +197,18 @@ async function fetchNormalizedAssetSummaryForBroker(
   const broker = getBrokerOrThrow(registry, brokerId);
   const snapshot = await broker.fetchAssetSnapshot(toFetchOptions(options));
 
-  return brokerId === "samsungpop"
-    ? normalizeSamsungAssetSummary(snapshot)
-    : brokerId === "shinhansec"
-      ? normalizeShinhanAssetSummary(snapshot)
-      : brokerId === "miraeasset"
-        ? normalizeMiraeAssetAssetSummary(snapshot)
-        : normalizeNhSecAssetSummary(snapshot);
+  switch (brokerId) {
+    case "samsungpop":
+      return normalizeSamsungAssetSummary(snapshot);
+    case "shinhansec":
+      return normalizeShinhanAssetSummary(snapshot);
+    case "miraeasset":
+      return normalizeMiraeAssetAssetSummary(snapshot);
+    case "nhsec":
+      return normalizeNhSecAssetSummary(snapshot);
+    case "korsec":
+      return normalizeKorSecAssetSummary(snapshot);
+  }
 }
 
 async function fetchNormalizedHoldingsForBroker(
@@ -247,6 +276,28 @@ async function fetchNormalizedHoldingsForBroker(
       brokerId,
       brokerName: snapshot.brokerName,
       capturedAt: snapshot.capturedAt,
+      ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
+      holdings: filteredHoldings,
+    };
+  }
+
+  if (brokerId === "korsec") {
+    const broker = getKorSecBroker();
+    const deepSnapshot = await broker.fetchDeepSnapshot(toFetchOptions(options));
+    const holdings = [
+      ...normalizeKorSecHoldings(deepSnapshot.generalBalance),
+      ...Object.values(deepSnapshot.balanceCategories).flatMap((snapshot) =>
+        snapshot ? normalizeKorSecHoldings(snapshot) : [],
+      ),
+    ];
+    const filteredHoldings = options.accountNumber
+      ? holdings.filter((item) => item.accountNumber === options.accountNumber)
+      : holdings;
+
+    return {
+      brokerId,
+      brokerName: deepSnapshot.brokerName,
+      capturedAt: deepSnapshot.capturedAt,
       ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
       holdings: filteredHoldings,
     };
@@ -323,6 +374,10 @@ async function fetchNormalizedTransactionsForBroker(
 
   if (brokerId === "miraeasset") {
     throw new Error("미래에셋증권은 현재 통합 거래내역 조회를 지원하지 않습니다.");
+  }
+
+  if (brokerId === "korsec") {
+    throw new Error("한국투자증권은 현재 ID 로그인 기준 통합 거래내역 조회를 지원하지 않습니다.");
   }
 
   if (brokerId === "nhsec") {
@@ -507,11 +562,28 @@ server.registerTool(
 );
 
 server.registerTool(
+  "setup_korsec_session",
+  {
+    title: "Setup Korea Investment & Securities Session",
+    description:
+      "브라우저를 열고 한국투자증권 ID 로그인 세션을 저장합니다.",
+  },
+  async () => {
+    try {
+      const broker = getBrokerOrThrow(registry, "korsec");
+      return toToolResult(await broker.setupManualSession());
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
   "get_asset_snapshot",
   {
     title: "Get Asset Snapshot",
     description:
-      "증권사 자산 화면에서 범용 요약 데이터를 읽습니다. 삼성증권/신한투자증권/미래에셋증권/NH투자증권을 지원합니다.",
+      "증권사 자산 화면에서 범용 요약 데이터를 읽습니다. 삼성증권/신한투자증권/미래에셋증권/NH투자증권/한국투자증권을 지원합니다.",
     inputSchema: z.object({
       brokerId: brokerIdSchema,
       forceRefresh: z.boolean().optional().default(false),
@@ -635,6 +707,26 @@ server.registerTool(
           capturedAt: snapshot.capturedAt,
           count: accounts.length,
           accounts,
+        });
+      }
+
+      if (brokerId === "korsec") {
+        const broker = getKorSecBroker();
+        const snapshot = await broker.fetchBalanceCategory("stock", {
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const accounts = normalizeKorSecAccounts(snapshot);
+
+        return toToolResult({
+          brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          count: accounts.length,
+          accounts,
+          rawPageTitle: snapshot.pageTitle,
+          rawPageUrl: snapshot.pageUrl,
         });
       }
 
@@ -938,7 +1030,7 @@ server.registerTool(
   {
     title: "Get All Transactions",
     description:
-      "지원 중인 여러 증권사의 거래내역을 한 번에 정규화해서 반환합니다. 현재 미래에셋증권은 거래내역이 통합 대상에서 제외됩니다.",
+      "지원 중인 여러 증권사의 거래내역을 한 번에 정규화해서 반환합니다. 현재 미래에셋증권과 한국투자증권은 거래내역이 통합 대상에서 제외됩니다.",
     inputSchema: z.object({
       brokerIds: brokerIdsSchema,
       startDate: optionalDateSchema,
@@ -951,16 +1043,26 @@ server.registerTool(
   async ({ brokerIds, startDate, endDate, debug, forceRefresh, headless }) => {
     try {
       const targetBrokerIds = resolveBrokerIds(brokerIds);
-      const skipped = targetBrokerIds.includes("miraeasset")
-        ? [
-            {
-              brokerId: "miraeasset" as const,
-              reason: "현재 미래에셋증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다.",
-            },
-          ]
-        : [];
+      const skipped = [
+        ...(targetBrokerIds.includes("miraeasset")
+          ? [
+              {
+                brokerId: "miraeasset" as const,
+                reason: "현재 미래에셋증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다.",
+              },
+            ]
+          : []),
+        ...(targetBrokerIds.includes("korsec")
+          ? [
+              {
+                brokerId: "korsec" as const,
+                reason: "현재 한국투자증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다.",
+              },
+            ]
+          : []),
+      ];
       const transactionBrokerIds = targetBrokerIds.filter(
-        (brokerId) => brokerId !== "miraeasset",
+        (brokerId) => brokerId !== "miraeasset" && brokerId !== "korsec",
       );
 
       const settled = await Promise.all(
@@ -3031,6 +3133,191 @@ server.registerTool(
   async ({ debug, forceRefresh, headless }) => {
     try {
       const broker = getNhSecBroker();
+      return toToolResult(
+        await broker.fetchDeepSnapshot({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+
+server.registerTool(
+  "get_korsec_asset_summary",
+  {
+    title: "Get Korea Investment Asset Summary",
+    description: "한국투자증권 자산현황(요약) 페이지를 수집합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getKorSecBroker();
+      return toToolResult(
+        await broker.fetchAssetSummaryPage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_general_balance",
+  {
+    title: "Get Korea Investment General Balance",
+    description: "한국투자증권 자산현황(종합잔고평가) 페이지를 수집합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getKorSecBroker();
+      return toToolResult(
+        await broker.fetchGeneralBalancePage({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_balance_category",
+  {
+    title: "Get Korea Investment Balance Category",
+    description:
+      "한국투자증권 자산현황(종합잔고평가)의 상품 탭별 잔고 HTML을 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      category: korsecBalanceCategorySchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ category, debug, forceRefresh, headless }) => {
+    try {
+      const broker = getKorSecBroker();
+      return toToolResult(
+        await broker.fetchBalanceCategory(category, {
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_accounts",
+  {
+    title: "Get Korea Investment Accounts",
+    description: "한국투자증권 자산현황(종합잔고평가)에서 계좌 목록과 계좌별 요약을 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getKorSecBroker();
+      const snapshot = await broker.fetchBalanceCategory("stock", {
+        debug,
+        forceRefresh,
+        ...(headless !== undefined ? { headless } : {}),
+      });
+      const accounts = normalizeKorSecAccounts(snapshot);
+
+      return toToolResult({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        count: accounts.length,
+        accounts,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_holdings",
+  {
+    title: "Get Korea Investment Holdings",
+    description: "한국투자증권 자산현황(종합잔고평가)에서 보유종목/상품 정보를 정규화해서 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getKorSecBroker();
+      const deepSnapshot = await broker.fetchDeepSnapshot({
+        debug,
+        forceRefresh,
+        ...(headless !== undefined ? { headless } : {}),
+      });
+      const holdings = [
+        ...normalizeKorSecHoldings(deepSnapshot.generalBalance),
+        ...Object.values(deepSnapshot.balanceCategories).flatMap((snapshot) =>
+          snapshot ? normalizeKorSecHoldings(snapshot) : [],
+        ),
+      ];
+
+      return toToolResult({
+        brokerId: deepSnapshot.brokerId,
+        brokerName: deepSnapshot.brokerName,
+        capturedAt: deepSnapshot.capturedAt,
+        count: holdings.length,
+        byCategory: countBy(holdings.map((item) => item.category)),
+        holdings,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_deep_snapshot",
+  {
+    title: "Get Korea Investment Deep Snapshot",
+    description: "한국투자증권 자산현황(요약)과 자산현황(종합잔고평가)를 한 번에 수집합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      const broker = getKorSecBroker();
       return toToolResult(
         await broker.fetchDeepSnapshot({
           debug,

@@ -21,7 +21,8 @@
     "auth:samsungpop": "tsx src/scripts/auth-samsungpop.ts",
     "auth:shinhansec": "tsx src/scripts/auth-shinhansec.ts",
     "auth:miraeasset": "tsx src/scripts/auth-miraeasset.ts",
-    "auth:nhsec": "tsx src/scripts/auth-nhsec.ts"
+    "auth:nhsec": "tsx src/scripts/auth-nhsec.ts",
+    "auth:korsec": "tsx src/scripts/auth-korsec.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
