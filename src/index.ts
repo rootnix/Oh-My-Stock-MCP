@@ -16,6 +16,9 @@ import {
   normalizeKiwoomAssetSummary,
   normalizeKiwoomHoldings,
   normalizeKiwoomTransactions,
+  normalizeKorSecApiAccounts,
+  normalizeKorSecApiHoldings,
+  normalizeKorSecApiTransactions,
   normalizeKorSecAccounts,
   normalizeKorSecAssetSummary,
   normalizeKorSecHoldings,
@@ -37,6 +40,7 @@ import {
 } from "./lib/normalize.js";
 import type {
   BrokerId,
+  KorSecDeepSnapshot,
   NormalizedAccount,
   NormalizedAssetSummary,
   NormalizedHolding,
@@ -317,21 +321,37 @@ async function fetchNormalizedHoldingsForBroker(
 
   if (brokerId === "korsec") {
     const broker = getKorSecBroker();
-    const deepSnapshot = await broker.fetchDeepSnapshot(toFetchOptions(options));
-    const holdings = [
-      ...normalizeKorSecHoldings(deepSnapshot.generalBalance),
-      ...Object.values(deepSnapshot.balanceCategories).flatMap((snapshot) =>
-        snapshot ? normalizeKorSecHoldings(snapshot) : [],
-      ),
-    ];
+    let brokerName = broker.name;
+    let capturedAt = new Date().toISOString();
+    let resolvedHoldings: NormalizedHolding[] = [];
+
+    if (config.korsec.authMode === "api") {
+      const snapshot = await broker.fetchApiHoldings(toFetchOptions(options));
+      brokerName = snapshot.brokerName;
+      capturedAt = snapshot.capturedAt;
+      resolvedHoldings = normalizeKorSecApiHoldings(snapshot);
+    } else {
+      const deepSnapshot = await broker.fetchDeepSnapshot(
+        toFetchOptions(options),
+      ) as KorSecDeepSnapshot;
+      brokerName = deepSnapshot.brokerName;
+      capturedAt = deepSnapshot.capturedAt;
+      resolvedHoldings = [
+        ...normalizeKorSecHoldings(deepSnapshot.generalBalance),
+        ...Object.values(deepSnapshot.balanceCategories).flatMap((pageSnapshot) =>
+          pageSnapshot ? normalizeKorSecHoldings(pageSnapshot) : [],
+        ),
+      ];
+    }
+
     const filteredHoldings = options.accountNumber
-      ? holdings.filter((item) => item.accountNumber === options.accountNumber)
-      : holdings;
+      ? resolvedHoldings.filter((item) => item.accountNumber === options.accountNumber)
+      : resolvedHoldings;
 
     return {
       brokerId,
-      brokerName: deepSnapshot.brokerName,
-      capturedAt: deepSnapshot.capturedAt,
+      brokerName,
+      capturedAt,
       ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
       holdings: filteredHoldings,
     };
@@ -436,6 +456,20 @@ async function fetchNormalizedAccountsForBroker(
 
   if (brokerId === "korsec") {
     const broker = getKorSecBroker();
+    if (config.korsec.authMode === "api") {
+      const snapshot = await broker.fetchApiAccounts(toFetchOptions(options));
+      const accounts = normalizeKorSecApiAccounts(snapshot);
+
+      return {
+        brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        pageTitle: "한국투자증권 OpenAPI 계좌 요약",
+        pageUrl: "https://openapi.koreainvestment.com:9443",
+        accounts,
+      };
+    }
+
     const snapshot = await broker.fetchBalanceCategory("stock", toFetchOptions(options));
     const accounts = normalizeKorSecAccounts(snapshot);
 
@@ -531,7 +565,33 @@ async function fetchNormalizedTransactionsForBroker(
   }
 
   if (brokerId === "korsec") {
-    throw new Error("한국투자증권은 현재 ID 로그인 기준 통합 거래내역 조회를 지원하지 않습니다.");
+    if (config.korsec.authMode !== "api") {
+      throw new Error("한국투자증권은 현재 ID 로그인 기준 통합 거래내역 조회를 지원하지 않습니다.");
+    }
+
+    const broker = getKorSecBroker();
+    const snapshot = await broker.fetchApiTransactions({
+      ...(options.startDate ? { startDate: options.startDate } : {}),
+      ...(options.endDate ? { endDate: options.endDate } : {}),
+      ...toFetchOptions(options),
+    });
+    const transactions = normalizeKorSecApiTransactions(snapshot);
+    const filteredTransactions = options.accountNumber
+      ? transactions.filter((item) => item.accountNumber === options.accountNumber)
+      : transactions;
+
+    return {
+      brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
+      query: {
+        startDate: snapshot.query.startDate,
+        endDate: snapshot.query.endDate,
+      },
+      sourceTypes: ["broker_specific"],
+      transactions: filteredTransactions,
+    };
   }
 
   if (brokerId === "kiwoom") {
@@ -1220,7 +1280,7 @@ server.registerTool(
   {
     title: "Get All Transactions",
     description:
-      "지원 중인 여러 증권사의 거래내역을 한 번에 정규화해서 반환합니다. 현재 미래에셋증권과 한국투자증권은 거래내역이 통합 대상에서 제외됩니다.",
+      "지원 중인 여러 증권사의 거래내역을 한 번에 정규화해서 반환합니다. 미래에셋증권은 제외되며, 한국투자증권은 OpenAPI(auth_mode=api)일 때만 포함됩니다.",
     inputSchema: z.object({
       brokerIds: brokerIdsSchema,
       startDate: optionalDateSchema,
@@ -1242,17 +1302,19 @@ server.registerTool(
               },
             ]
           : []),
-        ...(targetBrokerIds.includes("korsec")
+        ...(targetBrokerIds.includes("korsec") && config.korsec.authMode !== "api"
           ? [
               {
                 brokerId: "korsec" as const,
-                reason: "현재 한국투자증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다.",
+                reason: "현재 한국투자증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다. OpenAPI(auth_mode=api)에서는 포함됩니다.",
               },
             ]
           : []),
       ];
       const transactionBrokerIds = targetBrokerIds.filter(
-        (brokerId) => brokerId !== "miraeasset" && brokerId !== "korsec",
+        (brokerId) =>
+          brokerId !== "miraeasset" &&
+          !(brokerId === "korsec" && config.korsec.authMode !== "api"),
       );
 
       const settled = await Promise.all(
@@ -1489,18 +1551,20 @@ server.registerTool(
                 },
               ]
             : []),
-          ...(targetBrokerIds.includes("korsec")
+          ...(targetBrokerIds.includes("korsec") && config.korsec.authMode !== "api"
             ? [
                 {
                   brokerId: "korsec" as const,
                   reason:
-                    "현재 한국투자증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다.",
+                    "현재 한국투자증권은 ID 로그인 기준 거래내역 통합 조회를 지원하지 않습니다. OpenAPI(auth_mode=api)에서는 포함됩니다.",
                 },
               ]
             : []),
         ];
         const transactionBrokerIds = targetBrokerIds.filter(
-          (brokerId) => brokerId !== "miraeasset" && brokerId !== "korsec",
+          (brokerId) =>
+            brokerId !== "miraeasset" &&
+            !(brokerId === "korsec" && config.korsec.authMode !== "api"),
         );
         const settled = await Promise.all(
           transactionBrokerIds.map(async (brokerId) => {
@@ -4029,7 +4093,7 @@ server.registerTool(
   "get_korsec_accounts",
   {
     title: "Get Korea Investment Accounts",
-    description: "한국투자증권 자산현황(종합잔고평가)에서 계좌 목록과 계좌별 요약을 구조화해서 반환합니다.",
+    description: "한국투자증권 계좌 목록과 계좌별 요약을 구조화해서 반환합니다. OpenAPI 모드에서는 REST 응답을, 브라우저 모드에서는 자산현황(종합잔고평가)을 사용합니다.",
     inputSchema: z.object({
       forceRefresh: z.boolean().optional().default(false),
       debug: z.boolean().optional().default(false),
@@ -4039,6 +4103,25 @@ server.registerTool(
   async ({ debug, forceRefresh, headless }) => {
     try {
       const broker = getKorSecBroker();
+      if (config.korsec.authMode === "api") {
+        const snapshot = await broker.fetchApiAccounts({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const accounts = normalizeKorSecApiAccounts(snapshot);
+
+        return toToolResult({
+          brokerId: snapshot.brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          count: accounts.length,
+          accounts,
+          totals: snapshot.totals,
+          assetBreakdown: snapshot.assetBreakdown,
+        });
+      }
+
       const snapshot = await broker.fetchBalanceCategory("stock", {
         debug,
         forceRefresh,
@@ -4063,7 +4146,7 @@ server.registerTool(
   "get_korsec_holdings",
   {
     title: "Get Korea Investment Holdings",
-    description: "한국투자증권 자산현황(종합잔고평가)에서 보유종목/상품 정보를 정규화해서 반환합니다.",
+    description: "한국투자증권 보유종목/상품 정보를 정규화해서 반환합니다. OpenAPI 모드에서는 국내/해외 잔고를 합쳐 반환합니다.",
     inputSchema: z.object({
       forceRefresh: z.boolean().optional().default(false),
       debug: z.boolean().optional().default(false),
@@ -4073,11 +4156,31 @@ server.registerTool(
   async ({ debug, forceRefresh, headless }) => {
     try {
       const broker = getKorSecBroker();
+      if (config.korsec.authMode === "api") {
+        const snapshot = await broker.fetchApiHoldings({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        });
+        const holdings = normalizeKorSecApiHoldings(snapshot);
+
+        return toToolResult({
+          brokerId: snapshot.brokerId,
+          brokerName: snapshot.brokerName,
+          capturedAt: snapshot.capturedAt,
+          count: holdings.length,
+          byCategory: countBy(holdings.map((item) => item.category)),
+          holdings,
+          domesticSummary: snapshot.domesticSummary,
+          overseasSummaries: snapshot.overseasSummaries,
+        });
+      }
+
       const deepSnapshot = await broker.fetchDeepSnapshot({
         debug,
         forceRefresh,
         ...(headless !== undefined ? { headless } : {}),
-      });
+      }) as KorSecDeepSnapshot;
       const holdings = [
         ...normalizeKorSecHoldings(deepSnapshot.generalBalance),
         ...Object.values(deepSnapshot.balanceCategories).flatMap((snapshot) =>
@@ -4103,7 +4206,7 @@ server.registerTool(
   "get_korsec_deep_snapshot",
   {
     title: "Get Korea Investment Deep Snapshot",
-    description: "한국투자증권 자산현황(요약)과 자산현황(종합잔고평가)를 한 번에 수집합니다.",
+    description: "한국투자증권 deep snapshot을 수집합니다. OpenAPI 모드에서는 계좌/잔고/거래/성과/해외잔고를, 브라우저 모드에서는 자산현황 페이지를 반환합니다.",
     inputSchema: z.object({
       forceRefresh: z.boolean().optional().default(false),
       debug: z.boolean().optional().default(false),
@@ -4115,6 +4218,117 @@ server.registerTool(
       const broker = getKorSecBroker();
       return toToolResult(
         await broker.fetchDeepSnapshot({
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_transactions",
+  {
+    title: "Get Korea Investment Transactions",
+    description: "한국투자증권 거래내역을 반환합니다. OpenAPI(auth_mode=api)에서만 지원됩니다.",
+    inputSchema: z.object({
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ startDate, endDate, debug, forceRefresh, headless }) => {
+    try {
+      if (config.korsec.authMode !== "api") {
+        throw new Error("한국투자증권 거래내역은 OpenAPI(auth_mode=api)에서만 지원합니다.");
+      }
+
+      const broker = getKorSecBroker();
+      const snapshot = await broker.fetchApiTransactions({
+        ...(startDate ? { startDate } : {}),
+        ...(endDate ? { endDate } : {}),
+        debug,
+        forceRefresh,
+        ...(headless !== undefined ? { headless } : {}),
+      });
+      const transactions = normalizeKorSecApiTransactions(snapshot);
+
+      return toToolResult({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        query: snapshot.query,
+        count: transactions.length,
+        byKind: countBy(transactions.map((item) => item.kind ?? "unknown")),
+        transactions,
+        summary: snapshot.summary,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_performance",
+  {
+    title: "Get Korea Investment Performance",
+    description: "한국투자증권 기간 손익/성과 정보를 반환합니다. OpenAPI(auth_mode=api)에서만 지원됩니다.",
+    inputSchema: z.object({
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ startDate, endDate, debug, forceRefresh, headless }) => {
+    try {
+      if (config.korsec.authMode !== "api") {
+        throw new Error("한국투자증권 기간 손익은 OpenAPI(auth_mode=api)에서만 지원합니다.");
+      }
+
+      const broker = getKorSecBroker();
+      return toToolResult(
+        await broker.fetchApiPerformance({
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          debug,
+          forceRefresh,
+          ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_korsec_overseas_balance",
+  {
+    title: "Get Korea Investment Overseas Balance",
+    description: "한국투자증권 해외주식/외화 잔고를 반환합니다. OpenAPI(auth_mode=api)에서만 지원됩니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+      headless: z.boolean().optional(),
+    }),
+  },
+  async ({ debug, forceRefresh, headless }) => {
+    try {
+      if (config.korsec.authMode !== "api") {
+        throw new Error("한국투자증권 해외잔고는 OpenAPI(auth_mode=api)에서만 지원합니다.");
+      }
+
+      const broker = getKorSecBroker();
+      return toToolResult(
+        await broker.fetchApiOverseasBalance({
           debug,
           forceRefresh,
           ...(headless !== undefined ? { headless } : {}),

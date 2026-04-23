@@ -53,7 +53,12 @@ export type AppConfig = {
     authMode: AuthMode;
     userId?: string;
     password?: string;
+    appKey?: string;
+    secretKey?: string;
+    accountNumber?: string;
+    accountProductCode?: string;
     storageStatePath: string;
+    tokenCachePath: string;
     debugDir: string;
     loginTimeoutMs: number;
   };
@@ -111,6 +116,12 @@ export function loadConfig(): AppConfig {
   const nhSecPassword = cleanOptional(process.env.NHSEC_USER_PASSWORD);
   const korSecUserId = cleanOptional(process.env.KORSEC_USER_ID);
   const korSecPassword = cleanOptional(process.env.KORSEC_USER_PASSWORD);
+  const korSecAppKey = cleanOptional(process.env.KORSEC_APP_KEY);
+  const korSecSecretKey = cleanOptional(process.env.KORSEC_SECRET_KEY);
+  const korSecAccountNumber = cleanOptional(process.env.KORSEC_ACCOUNT_NUMBER);
+  const korSecAccountProductCode = cleanOptional(
+    process.env.KORSEC_ACCOUNT_PRODUCT_CODE,
+  );
   const kiwoomAppKey = cleanOptional(process.env.KIWOOM_APP_KEY);
   const kiwoomSecretKey = cleanOptional(process.env.KIWOOM_SECRET_KEY);
 
@@ -163,10 +174,17 @@ export function loadConfig(): AppConfig {
     korsec: {
       authMode: parseAuthMode(process.env.KORSEC_AUTH_MODE),
       storageStatePath: path.join(dataDir, "sessions", "korsec.storage.json"),
+      tokenCachePath: path.join(dataDir, "sessions", "korsec.token.json"),
       debugDir: path.join(dataDir, "debug", "korsec"),
       loginTimeoutMs: 90_000,
       ...(korSecUserId ? { userId: korSecUserId } : {}),
       ...(korSecPassword ? { password: korSecPassword } : {}),
+      ...(korSecAppKey ? { appKey: korSecAppKey } : {}),
+      ...(korSecSecretKey ? { secretKey: korSecSecretKey } : {}),
+      ...(korSecAccountNumber ? { accountNumber: korSecAccountNumber } : {}),
+      ...(korSecAccountProductCode
+        ? { accountProductCode: korSecAccountProductCode }
+        : {}),
     },
     kiwoom: {
       authMode: parseAuthMode(process.env.KIWOOM_AUTH_MODE),

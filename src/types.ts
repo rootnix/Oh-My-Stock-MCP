@@ -1019,6 +1019,170 @@ export type KorSecDeepSnapshot = {
   productBalances: KorSecProductBalancesSnapshot;
 };
 
+export type KorSecApiAccount = {
+  accountNumber: string;
+  accountProductCode: string;
+  displayAccountNumber: string;
+  accountType?: string;
+  ownerName?: string;
+  totalAsset?: string;
+  investmentAmount?: string;
+  evaluationAmount?: string;
+  withdrawableAmount?: string;
+  cashAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  raw: Record<string, string>;
+};
+
+export type KorSecApiAccountsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  envDv: "real";
+  accounts: KorSecApiAccount[];
+  assetBreakdown: Record<string, string>[];
+  totals: Record<string, string>;
+};
+
+export type KorSecApiHolding = {
+  accountNumber: string;
+  accountProductCode: string;
+  displayAccountNumber: string;
+  ownerName?: string;
+  assetCategory:
+    | "domestic_stock"
+    | "foreign_stock"
+    | "cash"
+    | "financial_product"
+    | "unknown";
+  productCode?: string;
+  productName?: string;
+  market?: string;
+  currency?: string;
+  quantity?: string;
+  orderableQuantity?: string;
+  purchasePrice?: string;
+  currentPrice?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  raw: Record<string, string>;
+};
+
+export type KorSecApiHoldingsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  envDv: "real";
+  account: KorSecApiAccount;
+  domesticSummary: Record<string, string>;
+  overseasSummaries: Record<string, string>[];
+  holdings: KorSecApiHolding[];
+};
+
+export type KorSecApiTransactionRecord = {
+  accountNumber: string;
+  accountProductCode: string;
+  displayAccountNumber: string;
+  transactionDate?: string;
+  transactionTime?: string;
+  orderNumber?: string;
+  originalOrderNumber?: string;
+  transactionLabel?: string;
+  productCode?: string;
+  productName?: string;
+  quantity?: string;
+  orderPrice?: string;
+  averageExecutedPrice?: string;
+  executedAmount?: string;
+  remainingQuantity?: string;
+  cancellationYn?: string;
+  settlementAmount?: string;
+  feeAmount?: string;
+  taxAmount?: string;
+  realizedProfit?: string;
+  returnRate?: string;
+  raw: Record<string, string>;
+};
+
+export type KorSecApiTransactionsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  envDv: "real";
+  account: KorSecApiAccount;
+  query: {
+    startDate: string;
+    endDate: string;
+  };
+  summary: Record<string, string>;
+  transactions: KorSecApiTransactionRecord[];
+};
+
+export type KorSecApiPerformanceDay = {
+  tradeDate?: string;
+  buyAmount?: string;
+  sellAmount?: string;
+  realizedProfit?: string;
+  feeAmount?: string;
+  loanInterest?: string;
+  taxAmount?: string;
+  returnRate?: string;
+  raw: Record<string, string>;
+};
+
+export type KorSecApiPerformanceRecord = {
+  tradeDate?: string;
+  productCode?: string;
+  productName?: string;
+  buyAmount?: string;
+  sellAmount?: string;
+  realizedProfit?: string;
+  returnRate?: string;
+  quantity?: string;
+  raw: Record<string, string>;
+};
+
+export type KorSecApiPerformanceSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  envDv: "real";
+  account: KorSecApiAccount;
+  query: {
+    startDate: string;
+    endDate: string;
+  };
+  dailySummary: Record<string, string>;
+  tradeSummary: Record<string, string>;
+  daily: KorSecApiPerformanceDay[];
+  trades: KorSecApiPerformanceRecord[];
+};
+
+export type KorSecApiOverseasBalanceSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  envDv: "real";
+  account: KorSecApiAccount;
+  summaries: Record<string, string>[];
+  holdings: KorSecApiHolding[];
+  totals: Record<string, string>;
+};
+
+export type KorSecApiDeepSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  accounts: KorSecApiAccountsSnapshot;
+  holdings: KorSecApiHoldingsSnapshot;
+  transactions: KorSecApiTransactionsSnapshot;
+  performance: KorSecApiPerformanceSnapshot;
+  overseasBalance: KorSecApiOverseasBalanceSnapshot;
+};
+
 export type KiwoomSummary = {
   ownerName?: string;
   accountNumber?: string;

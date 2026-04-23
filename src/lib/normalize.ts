@@ -3,6 +3,9 @@ import type {
   KiwoomAccountsSnapshot,
   KiwoomHoldingsSnapshot,
   KiwoomTransactionsSnapshot,
+  KorSecApiAccountsSnapshot,
+  KorSecApiHoldingsSnapshot,
+  KorSecApiTransactionsSnapshot,
   KorSecPageSnapshot,
   MiraeAssetPageSnapshot,
   NhSecBalancesSnapshot,
@@ -469,6 +472,112 @@ export function normalizeKorSecHoldings(
   }
 
   return holdings;
+}
+
+export function normalizeKorSecApiAccounts(
+  snapshot: KorSecApiAccountsSnapshot,
+): NormalizedAccount[] {
+  return snapshot.accounts.map((account) => ({
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    accountNumber: account.accountNumber,
+    displayAccountNumber: account.displayAccountNumber,
+    ...(account.accountType ? { accountType: account.accountType } : {}),
+    ...(account.ownerName ? { ownerName: account.ownerName } : {}),
+    ...(account.totalAsset ? { totalAssetRaw: account.totalAsset } : {}),
+    ...withParsedNumber("totalAssetValue", account.totalAsset),
+    ...(account.withdrawableAmount
+      ? { withdrawableAmountRaw: account.withdrawableAmount }
+      : {}),
+    ...withParsedNumber("withdrawableAmountValue", account.withdrawableAmount),
+    raw: account.raw,
+  }));
+}
+
+export function normalizeKorSecApiHoldings(
+  snapshot: KorSecApiHoldingsSnapshot,
+): NormalizedHolding[] {
+  return snapshot.holdings.map((holding) => ({
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    accountNumber: holding.accountNumber,
+    displayAccountNumber: holding.displayAccountNumber,
+    ...(holding.ownerName ? { ownerName: holding.ownerName } : {}),
+    category: normalizeHoldingCategory(holding.assetCategory),
+    ...(holding.productName ? { productName: holding.productName } : {}),
+    ...(holding.productCode ? { productCode: holding.productCode } : {}),
+    ...(holding.market ? { market: holding.market } : {}),
+    ...(holding.currency ? { currency: holding.currency } : {}),
+    ...(holding.quantity ? { quantityRaw: holding.quantity } : {}),
+    ...withParsedNumber("quantityValue", holding.quantity),
+    ...(holding.orderableQuantity
+      ? { orderableQuantityRaw: holding.orderableQuantity }
+      : {}),
+    ...withParsedNumber("orderableQuantityValue", holding.orderableQuantity),
+    ...(holding.purchasePrice ? { purchasePriceRaw: holding.purchasePrice } : {}),
+    ...withParsedNumber("purchasePriceValue", holding.purchasePrice),
+    ...(holding.currentPrice ? { currentPriceRaw: holding.currentPrice } : {}),
+    ...withParsedNumber("currentPriceValue", holding.currentPrice),
+    ...(holding.purchaseAmount ? { purchaseAmountRaw: holding.purchaseAmount } : {}),
+    ...withParsedNumber("purchaseAmountValue", holding.purchaseAmount),
+    ...(holding.evaluationAmount ? { evaluationAmountRaw: holding.evaluationAmount } : {}),
+    ...withParsedNumber("evaluationAmountValue", holding.evaluationAmount),
+    ...(holding.profitLoss ? { profitLossRaw: holding.profitLoss } : {}),
+    ...withParsedNumber("profitLossValue", holding.profitLoss),
+    ...(holding.returnRate ? { returnRateRaw: holding.returnRate } : {}),
+    ...withParsedNumber("returnRateValue", holding.returnRate),
+    raw: holding.raw,
+  }));
+}
+
+export function normalizeKorSecApiTransactions(
+  snapshot: KorSecApiTransactionsSnapshot,
+): NormalizedTransaction[] {
+  return snapshot.transactions.map((transaction) => {
+    const hint = [transaction.transactionLabel, transaction.productName, transaction.productCode]
+      .filter(Boolean)
+      .join(" ");
+    const kind = normalizeTransactionKind(inferTransactionKindFromText(hint) ?? "unknown") ?? "unknown";
+    const direction = inferDirectionFromKind(kind) ?? "neutral";
+    const assetCategory = transaction.productCode || transaction.productName
+      ? "domestic_stock"
+      : "cash";
+
+    return {
+      brokerId: snapshot.brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      sourceType: "broker_specific" as const,
+      accountNumber: transaction.accountNumber,
+      displayAccountNumber: transaction.displayAccountNumber,
+      ...(transaction.transactionDate ? { transactionDate: transaction.transactionDate } : {}),
+      ...(transaction.transactionTime ? { transactionTime: transaction.transactionTime } : {}),
+      ...(transaction.transactionLabel ? { label: transaction.transactionLabel } : {}),
+      ...(transaction.orderNumber ? { detailType: transaction.orderNumber } : {}),
+      ...(transaction.productName ? { productName: transaction.productName } : {}),
+      ...(transaction.productCode ? { productCode: transaction.productCode } : {}),
+      ...(transaction.quantity ? { quantityRaw: transaction.quantity } : {}),
+      ...withParsedNumber("quantityValue", transaction.quantity),
+      ...(transaction.orderPrice ? { unitPriceRaw: transaction.orderPrice } : {}),
+      ...withParsedNumber("unitPriceValue", transaction.orderPrice),
+      ...(transaction.executedAmount ? { amountRaw: transaction.executedAmount } : {}),
+      ...withParsedNumber("amountValue", transaction.executedAmount),
+      ...(transaction.settlementAmount
+        ? { settlementAmountRaw: transaction.settlementAmount }
+        : {}),
+      ...withParsedNumber("settlementAmountValue", transaction.settlementAmount),
+      ...(transaction.feeAmount ? { feeRaw: transaction.feeAmount } : {}),
+      ...withParsedNumber("feeValue", transaction.feeAmount),
+      ...(transaction.taxAmount ? { taxRaw: transaction.taxAmount } : {}),
+      ...withParsedNumber("taxValue", transaction.taxAmount),
+      kind,
+      direction,
+      assetCategory,
+      raw: transaction.raw,
+    };
+  });
 }
 
 export function normalizeMiraeAssetAssetSummary(

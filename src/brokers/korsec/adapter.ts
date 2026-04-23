@@ -1,5 +1,12 @@
 import { request as httpsRequest } from "node:https";
-import { readFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
+import { dirname } from "node:path";
 
 import type { Page } from "playwright";
 
@@ -18,6 +25,17 @@ import type {
   BrokerAssetSnapshot,
   BrokerAuthStatus,
   KorSecBalanceCategory,
+  KorSecApiAccount,
+  KorSecApiAccountsSnapshot,
+  KorSecApiDeepSnapshot,
+  KorSecApiHolding,
+  KorSecApiHoldingsSnapshot,
+  KorSecApiOverseasBalanceSnapshot,
+  KorSecApiPerformanceDay,
+  KorSecApiPerformanceRecord,
+  KorSecApiPerformanceSnapshot,
+  KorSecApiTransactionRecord,
+  KorSecApiTransactionsSnapshot,
   KorSecDeepSnapshot,
   KorSecPageSnapshot,
   KorSecProductBalanceCategorySnapshot,
@@ -31,13 +49,48 @@ import type {
 } from "../base.js";
 
 const BASE_URL = "https://securities.koreainvestment.com";
+const OPEN_API_BASE_URL = "https://openapi.koreainvestment.com:9443";
 const LOGIN_URL = `${BASE_URL}/main/member/login/login.jsp`;
 const MAIN_URL = `${BASE_URL}/main/Main.jsp`;
 const MY_ASSET_SUMMARY_URL = `${BASE_URL}/main/banking/inquiry/MyAssetSummary.jsp`;
 const GENERAL_BALANCE_URL = `${BASE_URL}/main/banking/inquiry/MyAsset.jsp`;
 const GENERAL_BALANCE_DATA_URL = `${GENERAL_BALANCE_URL}?cmd=TF01aa010100_Data`;
+const OPEN_API_TOKEN_URL = `${OPEN_API_BASE_URL}/oauth2/tokenP`;
 const HTTP_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+const DEFAULT_TRANSACTION_START = "2026-04-01";
+const DEFAULT_TRANSACTION_END = "2026-04-23";
+const OVERSEAS_EXCHANGE_CANDIDATES = [
+  { market: "NASD", currency: "USD" },
+  { market: "NYSE", currency: "USD" },
+  { market: "AMEX", currency: "USD" },
+  { market: "SEHK", currency: "HKD" },
+  { market: "SHAA", currency: "CNY" },
+  { market: "SZAA", currency: "CNY" },
+  { market: "TKSE", currency: "JPY" },
+  { market: "HASE", currency: "VND" },
+  { market: "VNSE", currency: "VND" },
+] as const;
+
+type KorSecApiTokenCache = {
+  accessToken: string;
+  expiresAt?: string;
+  savedAt: string;
+};
+
+type KorSecApiResponse = {
+  rt_cd?: string;
+  msg_cd?: string;
+  msg1?: string;
+  ctx_area_fk100?: string;
+  ctx_area_nk100?: string;
+  ctx_area_fk200?: string;
+  ctx_area_nk200?: string;
+  output?: Record<string, string> | Array<Record<string, string>>;
+  output1?: Record<string, string> | Array<Record<string, string>>;
+  output2?: Record<string, string> | Array<Record<string, string>>;
+  output3?: Record<string, string> | Array<Record<string, string>>;
+};
 
 const KORSEC_BALANCE_CATEGORY_MAP: Record<
   KorSecBalanceCategory,
@@ -83,6 +136,134 @@ function cleanSummaryValue(value: string | undefined): string | undefined {
   }
 
   return normalized;
+}
+
+function normalizeNumberString(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.replace(/[,\s]/gu, "").trim();
+  return normalized || undefined;
+}
+
+function toCompactDate(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.replace(/-/gu, "").trim();
+  return /^\d{8}$/u.test(normalized) ? normalized : undefined;
+}
+
+function defaultTransactionRange(input?: {
+  startDate?: string;
+  endDate?: string;
+}): { startDate: string; endDate: string } {
+  return {
+    startDate:
+      toCompactDate(input?.startDate) ?? DEFAULT_TRANSACTION_START.replace(/-/gu, ""),
+    endDate: toCompactDate(input?.endDate) ?? DEFAULT_TRANSACTION_END.replace(/-/gu, ""),
+  };
+}
+
+function parseKorSecApiDateTime(value?: string): {
+  transactionDate?: string;
+  transactionTime?: string;
+} {
+  const digits = value?.replace(/\D/gu, "");
+
+  if (!digits) {
+    return {};
+  }
+
+  if (digits.length >= 14) {
+    return {
+      transactionDate: digits.slice(0, 8),
+      transactionTime: digits.slice(8, 14),
+    };
+  }
+
+  if (digits.length === 8) {
+    return { transactionDate: digits };
+  }
+
+  if (digits.length === 6) {
+    return { transactionTime: digits };
+  }
+
+  return {};
+}
+
+function isTokenStillValid(expiresAt?: string): boolean {
+  if (!expiresAt) {
+    return false;
+  }
+
+  const normalized = expiresAt.replace(/\s+/gu, " ").trim().replace(" ", "T");
+  const parsed = new Date(normalized);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return false;
+  }
+
+  return parsed.getTime() - Date.now() > 60_000;
+}
+
+function toRecordArray(
+  value: KorSecApiResponse["output1"] | KorSecApiResponse["output2"] | KorSecApiResponse["output3"],
+): Record<string, string>[] {
+  if (!value) {
+    return [];
+  }
+
+  const rows = Array.isArray(value) ? value : [value];
+  return rows.map((row) =>
+    Object.fromEntries(
+      Object.entries(row).map(([key, entry]) => [key, normalizeText(String(entry ?? ""))]),
+    ),
+  );
+}
+
+function firstMeaningfulValue(
+  record: Record<string, string>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = cleanSummaryValue(record[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function uniqueBy<T>(items: T[], getKey: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+
+  for (const item of items) {
+    const key = getKey(item);
+
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
+function withDefinedStrings<T extends Record<string, string | undefined>>(
+  record: T,
+): Partial<{ [K in keyof T]: string }> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  ) as Partial<{ [K in keyof T]: string }>;
 }
 
 function textIncludesAny(text: string, candidates: string[]): boolean {
@@ -334,6 +515,44 @@ export class KorSecBroker implements BrokerAdapter {
   }
 
   async getAuthStatus(): Promise<BrokerAuthStatus> {
+    if (this.config.korsec.authMode === "api") {
+      const hasSavedSession = await this.tokenCacheExists();
+      const hasCredentials = this.hasApiCredentialSet;
+      const missingRequirements: string[] = [];
+
+      if (!hasCredentials) {
+        missingRequirements.push(
+          "한국투자증권 OpenAPI를 사용하려면 KORSEC_APP_KEY, KORSEC_SECRET_KEY 가 모두 필요합니다.",
+        );
+      }
+
+      if (
+        !this.config.korsec.accountNumber &&
+        !this.config.korsec.accountProductCode
+      ) {
+        missingRequirements.push(
+          "권장: KORSEC_ACCOUNT_NUMBER(8자리), KORSEC_ACCOUNT_PRODUCT_CODE(2자리)를 설정하세요. 없으면 기존 디버그 산출물에서 계좌를 추론합니다.",
+        );
+      }
+
+      return {
+        brokerId: "korsec",
+        brokerName: `${this.name} OpenAPI`,
+        authMode: this.config.korsec.authMode,
+        sessionPath: this.config.korsec.tokenCachePath,
+        hasSavedSession,
+        hasCredentials,
+        ready: missingRequirements.length === 0 || hasCredentials,
+        missingRequirements,
+        notes: [
+          "한국투자증권은 browser(ID 로그인) 방식과 REST OpenAPI(app key/secret) 방식을 모두 지원합니다.",
+          `토큰 엔드포인트: ${OPEN_API_TOKEN_URL}`,
+          "구현된 API: inquire-account-balance, inquire-balance, inquire-daily-ccld, inquire-period-profit, inquire-period-trade-profit, inquire-present-balance.",
+          "계좌번호를 명시하지 않으면 KORSEC_ACCOUNT_NUMBER/KORSEC_ACCOUNT_PRODUCT_CODE 또는 기존 브라우저 디버그 산출물에서 계좌를 추론합니다.",
+        ],
+      };
+    }
+
     const hasSavedSession = await this.storage.exists();
     const hasCredentials = this.hasCredentialSet();
     const canAuthenticate = hasSavedSession || hasCredentials;
@@ -370,6 +589,16 @@ export class KorSecBroker implements BrokerAdapter {
   }
 
   async setupManualSession(): Promise<ManualSessionSetupResult> {
+    if (this.config.korsec.authMode === "api") {
+      const token = await this.issueApiAccessToken(true);
+
+      return {
+        savedAt: token.savedAt,
+        storageStatePath: this.config.korsec.tokenCachePath,
+        detectedUrl: OPEN_API_TOKEN_URL,
+      };
+    }
+
     const browserSession = await createBrowserSession(this.config, {
       headless: false,
     });
@@ -405,6 +634,41 @@ export class KorSecBroker implements BrokerAdapter {
   async fetchAssetSnapshot(
     options: FetchBrokerAssetsOptions = {},
   ): Promise<BrokerAssetSnapshot> {
+    if (this.config.korsec.authMode === "api") {
+      const snapshot = await this.fetchApiAccounts(options);
+      const account = snapshot.accounts[0];
+      const summary = {
+        ...(account?.ownerName ? { ownerName: account.ownerName } : {}),
+        standardDate: snapshot.capturedAt.slice(0, 10),
+        ...(account?.totalAsset ? { totalAsset: account.totalAsset } : {}),
+        ...(account?.investmentAmount
+          ? { investmentAmount: account.investmentAmount }
+          : {}),
+        ...(account?.evaluationAmount
+          ? { evaluationAmount: account.evaluationAmount }
+          : {}),
+        ...(account?.withdrawableAmount
+          ? { withdrawableAmount: account.withdrawableAmount }
+          : {}),
+        ...(account?.profitLoss ? { profitLoss: account.profitLoss } : {}),
+        ...(account?.returnRate ? { returnRate: account.returnRate } : {}),
+        rawSummary: snapshot.totals,
+      };
+
+      return {
+        brokerId: "korsec",
+        brokerName: `${this.name} OpenAPI`,
+        capturedAt: snapshot.capturedAt,
+        pageTitle: "한국투자증권 OpenAPI 자산 요약",
+        pageUrl: OPEN_API_BASE_URL,
+        headings: [],
+        keyValues: [],
+        tables: [],
+        rawTextPreview: JSON.stringify(snapshot.totals),
+        korsecAssetAnalysis: summary,
+      };
+    }
+
     const summaryPage = await this.fetchAssetSummaryPage(options);
     const generalPage = await this.fetchGeneralBalancePage(options);
     const summary = extractSummaryFromPages(summaryPage, generalPage);
@@ -438,7 +702,11 @@ export class KorSecBroker implements BrokerAdapter {
 
   async fetchDeepSnapshot(
     options: FetchBrokerAssetsOptions = {},
-  ): Promise<KorSecDeepSnapshot> {
+  ): Promise<KorSecDeepSnapshot | KorSecApiDeepSnapshot> {
+    if (this.config.korsec.authMode === "api") {
+      return this.fetchApiDeepSnapshot(options);
+    }
+
     const assetSummary = await this.fetchAssetSummaryPage(options);
     const generalBalance = await this.fetchGeneralBalancePage(options);
     const balanceCategories = Object.fromEntries(
@@ -938,6 +1206,1025 @@ export class KorSecBroker implements BrokerAdapter {
       recordCount: records.length,
       records,
     };
+  }
+
+  async fetchApiAccounts(
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<KorSecApiAccountsSnapshot> {
+    const account = await this.resolveApiAccount();
+    const [accountBalance, domesticBalance] = await Promise.all([
+      this.fetchApiAccountBalanceRaw(options),
+      this.fetchApiDomesticBalanceRaw(options),
+    ]);
+    const totals = {
+      ...(accountBalance.output2[0] ?? {}),
+      ...(domesticBalance.output2[0] ?? {}),
+    };
+    const cashAmount = firstMeaningfulValue(totals, ["tot_dncl_amt", "dncl_amt"]);
+    const accountRecord: KorSecApiAccount = {
+      accountNumber: account.accountNumber,
+      accountProductCode: account.accountProductCode,
+      displayAccountNumber: account.displayAccountNumber,
+      accountType: this.inferApiAccountType(account.accountProductCode),
+      totalAsset:
+        firstMeaningfulValue(totals, ["tot_asst_amt", "tot_asst_amt2"]) ?? "0",
+      investmentAmount:
+        firstMeaningfulValue(totals, ["pchs_amt_smtl", "pchs_amt"]) ?? "0",
+      evaluationAmount:
+        firstMeaningfulValue(totals, ["evlu_amt_smtl", "evlu_amt"]) ?? "0",
+      withdrawableAmount:
+        firstMeaningfulValue(totals, ["dnca_tot_amt", "tot_dncl_amt", "dncl_amt"]) ??
+        "0",
+      ...(cashAmount ? { cashAmount } : {}),
+      profitLoss:
+        firstMeaningfulValue(totals, [
+          "evlu_pfls_amt_smtl",
+          "evlu_pfls_amt",
+          "tot_evlu_pfls_amt",
+        ]) ?? "0",
+      returnRate:
+        firstMeaningfulValue(totals, ["asst_icdc_erng_rt", "evlu_erng_rt1"]) ?? "0",
+      raw: totals,
+    };
+
+    return {
+      brokerId: "korsec",
+      brokerName: `${this.name} OpenAPI`,
+      capturedAt: new Date().toISOString(),
+      envDv: "real",
+      accounts: [accountRecord],
+      assetBreakdown: accountBalance.output1,
+      totals,
+    };
+  }
+
+  async fetchApiHoldings(
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<KorSecApiHoldingsSnapshot> {
+    const accounts = await this.fetchApiAccounts(options);
+    const account = this.getPrimaryApiAccount(accounts);
+    const domesticBalance = await this.fetchApiDomesticBalanceRaw(options);
+    const overseas = await this.fetchApiOverseasPresentBalanceRaw(options).catch(
+      () => ({ output1: [], output2: [], output3: [] }),
+    );
+    const domesticHoldings = domesticBalance.output1.flatMap((record) => {
+      const productCode = firstMeaningfulValue(record, ["pdno", "mksc_shrn_iscd"]);
+      const productName = firstMeaningfulValue(record, [
+        "prdt_name",
+        "prdt_abrv_name",
+      ]);
+
+      if (!productCode && !productName) {
+        return [];
+      }
+
+      const holding: KorSecApiHolding = {
+        accountNumber: account.accountNumber,
+        accountProductCode: account.accountProductCode,
+        displayAccountNumber: account.displayAccountNumber,
+        assetCategory: "domestic_stock",
+        ...(productCode ? { productCode } : {}),
+        ...(productName ? { productName } : {}),
+        ...withDefinedStrings({
+          quantity: firstMeaningfulValue(record, ["hldg_qty", "cblc_qty13"]),
+          orderableQuantity: firstMeaningfulValue(record, [
+            "ord_psbl_qty",
+            "ord_psbl_qty1",
+          ]),
+          purchasePrice: firstMeaningfulValue(record, [
+            "pchs_avg_pric",
+            "avg_unpr3",
+          ]),
+          currentPrice: firstMeaningfulValue(record, ["prpr", "ovrs_now_pric1"]),
+          purchaseAmount: firstMeaningfulValue(record, ["pchs_amt", "frcr_pchs_amt"]),
+          evaluationAmount: firstMeaningfulValue(record, [
+            "evlu_amt",
+            "frcr_evlu_amt2",
+          ]),
+          profitLoss: firstMeaningfulValue(record, [
+            "evlu_pfls_amt",
+            "evlu_pfls_amt2",
+          ]),
+          returnRate: firstMeaningfulValue(record, [
+            "evlu_pfls_rt",
+            "evlu_erng_rt1",
+            "pftrt",
+          ]),
+        }),
+        raw: record,
+      };
+
+      return [holding];
+    });
+    const overseasHoldings = uniqueBy(
+      [...overseas.output1, ...overseas.output2, ...overseas.output3].flatMap((record) => {
+        const productCode = firstMeaningfulValue(record, ["ovrs_pdno", "pdno", "std_pdno"]);
+        const productName = firstMeaningfulValue(record, ["ovrs_item_name", "prdt_name"]);
+
+        if (!productCode && !productName) {
+          return [];
+        }
+
+        const holding: KorSecApiHolding = {
+          accountNumber: account.accountNumber,
+          accountProductCode: account.accountProductCode,
+          displayAccountNumber: account.displayAccountNumber,
+          assetCategory: "foreign_stock",
+          ...(productCode ? { productCode } : {}),
+          ...(productName ? { productName } : {}),
+          ...withDefinedStrings({
+            market: firstMeaningfulValue(record, ["tr_mket_name", "ovrs_excg_cd"]),
+            currency: firstMeaningfulValue(record, ["crcy_cd", "buy_crcy_cd"]),
+            quantity: firstMeaningfulValue(record, [
+              "cblc_qty13",
+              "ovrs_cblc_qty",
+              "hldg_qty",
+            ]),
+            orderableQuantity: firstMeaningfulValue(record, [
+              "ord_psbl_qty1",
+              "ord_psbl_qty",
+            ]),
+            purchasePrice: firstMeaningfulValue(record, [
+              "avg_unpr3",
+              "pchs_avg_pric",
+            ]),
+            currentPrice: firstMeaningfulValue(record, ["ovrs_now_pric1", "prpr"]),
+            purchaseAmount: firstMeaningfulValue(record, ["frcr_pchs_amt", "pchs_amt"]),
+            evaluationAmount: firstMeaningfulValue(record, [
+              "frcr_evlu_amt2",
+              "evlu_amt",
+            ]),
+            profitLoss: firstMeaningfulValue(record, [
+              "evlu_pfls_amt2",
+              "evlu_pfls_amt",
+            ]),
+            returnRate: firstMeaningfulValue(record, [
+              "evlu_pfls_rt1",
+              "pftrt",
+              "evlu_erng_rt1",
+            ]),
+          }),
+          raw: record,
+        };
+
+        return [holding];
+      }),
+      (item) =>
+        [
+          item.accountNumber,
+          item.assetCategory,
+          item.productCode ?? "",
+          item.productName ?? "",
+        ].join(":"),
+    );
+
+    return {
+      brokerId: "korsec",
+      brokerName: `${this.name} OpenAPI`,
+      capturedAt: new Date().toISOString(),
+      envDv: "real",
+      account,
+      domesticSummary: domesticBalance.output2[0] ?? {},
+      overseasSummaries: [...overseas.output1, ...overseas.output2, ...overseas.output3],
+      holdings: [...domesticHoldings, ...overseasHoldings],
+    };
+  }
+
+  async fetchApiTransactions(
+    options: FetchBrokerAssetsOptions & {
+      startDate?: string;
+      endDate?: string;
+    } = {},
+  ): Promise<KorSecApiTransactionsSnapshot> {
+    const accounts = await this.fetchApiAccounts(options);
+    const account = this.getPrimaryApiAccount(accounts);
+    const query = defaultTransactionRange(options);
+    const daily = await this.fetchApiDailyCcldRaw(query, options);
+    const transactions: KorSecApiTransactionRecord[] = daily.output1.flatMap((record) => {
+      const orderNumber = firstMeaningfulValue(record, ["odno"]);
+      const productCode = firstMeaningfulValue(record, ["pdno"]);
+      const productName = firstMeaningfulValue(record, ["prdt_name"]);
+      const label = [
+        firstMeaningfulValue(record, ["sll_buy_dvsn_cd_name"]),
+        firstMeaningfulValue(record, ["trad_dvsn_name", "ord_dvsn_name"]),
+      ]
+        .filter(Boolean)
+        .join(" / ");
+      const dateTime = parseKorSecApiDateTime(
+        firstMeaningfulValue(record, ["ord_dt", "oprt_dtl_dtime"]),
+      );
+
+      if (!orderNumber && !productCode && !productName && !label) {
+        return [];
+      }
+
+      return [
+        {
+          accountNumber: account.accountNumber,
+          accountProductCode: account.accountProductCode,
+          displayAccountNumber: account.displayAccountNumber,
+          ...withDefinedStrings(dateTime),
+          ...(orderNumber ? { orderNumber } : {}),
+          ...(label ? { transactionLabel: label } : {}),
+          ...(productCode ? { productCode } : {}),
+          ...(productName ? { productName } : {}),
+          ...withDefinedStrings({
+            originalOrderNumber: firstMeaningfulValue(record, ["orgn_odno"]),
+            quantity: firstMeaningfulValue(record, ["ord_qty", "tot_ccld_qty"]),
+            orderPrice: firstMeaningfulValue(record, ["ord_unpr"]),
+            averageExecutedPrice: firstMeaningfulValue(record, ["avg_prvs"]),
+            executedAmount: firstMeaningfulValue(record, ["tot_ccld_amt"]),
+            remainingQuantity: firstMeaningfulValue(record, ["rmn_qty"]),
+            cancellationYn: firstMeaningfulValue(record, ["cncl_yn"]),
+          }),
+          raw: record,
+        },
+      ];
+    });
+
+    return {
+      brokerId: "korsec",
+      brokerName: `${this.name} OpenAPI`,
+      capturedAt: new Date().toISOString(),
+      envDv: "real",
+      account,
+      query,
+      summary: daily.output2[0] ?? {},
+      transactions,
+    };
+  }
+
+  async fetchApiPerformance(
+    options: FetchBrokerAssetsOptions & {
+      startDate?: string;
+      endDate?: string;
+    } = {},
+  ): Promise<KorSecApiPerformanceSnapshot> {
+    const accounts = await this.fetchApiAccounts(options);
+    const account = this.getPrimaryApiAccount(accounts);
+    const query = defaultTransactionRange(options);
+    const [periodProfit, periodTradeProfit] = await Promise.all([
+      this.fetchApiPeriodProfitRaw(query, options),
+      this.fetchApiPeriodTradeProfitRaw(query, options),
+    ]);
+    const daily: KorSecApiPerformanceDay[] = periodProfit.output1.flatMap((record) => {
+      const tradeDate = firstMeaningfulValue(record, ["trad_dt"]);
+
+      if (!tradeDate) {
+        return [];
+      }
+
+      return [
+        {
+          tradeDate,
+          ...withDefinedStrings({
+            buyAmount: firstMeaningfulValue(record, ["buy_amt"]),
+            sellAmount: firstMeaningfulValue(record, ["sll_amt"]),
+            realizedProfit: firstMeaningfulValue(record, ["rlzt_pfls"]),
+            feeAmount: firstMeaningfulValue(record, ["fee"]),
+            loanInterest: firstMeaningfulValue(record, ["loan_int"]),
+            taxAmount: firstMeaningfulValue(record, ["tl_tax"]),
+            returnRate: firstMeaningfulValue(record, ["pfls_rt"]),
+          }),
+          raw: record,
+        },
+      ];
+    });
+    const trades: KorSecApiPerformanceRecord[] = periodTradeProfit.output1.flatMap((record) => {
+      const productCode = firstMeaningfulValue(record, ["pdno"]);
+      const productName = firstMeaningfulValue(record, ["prdt_name"]);
+
+      if (!productCode && !productName) {
+        return [];
+      }
+
+      return [
+        {
+          ...(productCode ? { productCode } : {}),
+          ...(productName ? { productName } : {}),
+          ...withDefinedStrings({
+            tradeDate: firstMeaningfulValue(record, ["trad_dt"]),
+            buyAmount: firstMeaningfulValue(record, ["buy_amt"]),
+            sellAmount: firstMeaningfulValue(record, ["sll_amt"]),
+            realizedProfit: firstMeaningfulValue(record, [
+              "rlzt_pfls",
+              "ovrs_rlzt_pfls_amt",
+            ]),
+            returnRate: firstMeaningfulValue(record, ["pftrt", "pfls_rt"]),
+            quantity: firstMeaningfulValue(record, [
+              "slcl_qty",
+              "sll_qty1",
+              "buy_qty1",
+            ]),
+          }),
+          raw: record,
+        },
+      ];
+    });
+
+    return {
+      brokerId: "korsec",
+      brokerName: `${this.name} OpenAPI`,
+      capturedAt: new Date().toISOString(),
+      envDv: "real",
+      account,
+      query,
+      dailySummary: periodProfit.output2[0] ?? {},
+      tradeSummary: periodTradeProfit.output2[0] ?? {},
+      daily,
+      trades,
+    };
+  }
+
+  async fetchApiOverseasBalance(
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<KorSecApiOverseasBalanceSnapshot> {
+    const accounts = await this.fetchApiAccounts(options);
+    const account = this.getPrimaryApiAccount(accounts);
+    const overseas = await this.fetchApiOverseasPresentBalanceRaw(options);
+    const summaries = [...overseas.output1, ...overseas.output2];
+    const rawHoldings = [...overseas.output1, ...overseas.output2, ...overseas.output3];
+    const holdings = uniqueBy(
+      rawHoldings.flatMap((record) => {
+        const productCode = firstMeaningfulValue(record, ["ovrs_pdno", "pdno", "std_pdno"]);
+        const productName = firstMeaningfulValue(record, ["ovrs_item_name", "prdt_name"]);
+
+        if (!productCode && !productName) {
+          return [];
+        }
+
+        return [
+          {
+            accountNumber: account.accountNumber,
+            accountProductCode: account.accountProductCode,
+            displayAccountNumber: account.displayAccountNumber,
+            assetCategory: "foreign_stock" as const,
+            ...(productCode ? { productCode } : {}),
+            ...(productName ? { productName } : {}),
+            ...withDefinedStrings({
+              market: firstMeaningfulValue(record, ["tr_mket_name", "ovrs_excg_cd"]),
+              currency: firstMeaningfulValue(record, ["crcy_cd", "buy_crcy_cd"]),
+              quantity: firstMeaningfulValue(record, [
+                "cblc_qty13",
+                "ovrs_cblc_qty",
+                "hldg_qty",
+              ]),
+              orderableQuantity: firstMeaningfulValue(record, [
+                "ord_psbl_qty1",
+                "ord_psbl_qty",
+              ]),
+              purchasePrice: firstMeaningfulValue(record, [
+                "avg_unpr3",
+                "pchs_avg_pric",
+              ]),
+              currentPrice: firstMeaningfulValue(record, ["ovrs_now_pric1", "prpr"]),
+              purchaseAmount: firstMeaningfulValue(record, ["frcr_pchs_amt", "pchs_amt"]),
+              evaluationAmount: firstMeaningfulValue(record, [
+                "frcr_evlu_amt2",
+                "evlu_amt",
+              ]),
+              profitLoss: firstMeaningfulValue(record, [
+                "evlu_pfls_amt2",
+                "evlu_pfls_amt",
+              ]),
+              returnRate: firstMeaningfulValue(record, [
+                "evlu_pfls_rt1",
+                "pftrt",
+                "evlu_erng_rt1",
+              ]),
+            }),
+            raw: record,
+          },
+        ];
+      }),
+      (item) =>
+        [
+          item.accountNumber,
+          item.productCode ?? "",
+          item.productName ?? "",
+          item.market ?? "",
+        ].join(":"),
+    );
+
+    return {
+      brokerId: "korsec",
+      brokerName: `${this.name} OpenAPI`,
+      capturedAt: new Date().toISOString(),
+      envDv: "real",
+      account,
+      summaries,
+      holdings,
+      totals: overseas.output3[0] ?? overseas.output2[0] ?? {},
+    };
+  }
+
+  async fetchApiDeepSnapshot(
+    options: FetchBrokerAssetsOptions & {
+      startDate?: string;
+      endDate?: string;
+    } = {},
+  ): Promise<KorSecApiDeepSnapshot> {
+    const [accounts, holdings, transactions, performance, overseasBalance] =
+      await Promise.all([
+        this.fetchApiAccounts(options),
+        this.fetchApiHoldings(options),
+        this.fetchApiTransactions(options),
+        this.fetchApiPerformance(options),
+        this.fetchApiOverseasBalance(options).catch(async () => {
+          const fallbackAccounts = await this.fetchApiAccounts(options);
+          return {
+            brokerId: "korsec" as const,
+            brokerName: `${this.name} OpenAPI`,
+            capturedAt: new Date().toISOString(),
+            envDv: "real" as const,
+            account: this.getPrimaryApiAccount(fallbackAccounts),
+            summaries: [],
+            holdings: [],
+            totals: {},
+          };
+        }),
+      ]);
+
+    return {
+      brokerId: "korsec",
+      brokerName: `${this.name} OpenAPI`,
+      capturedAt: new Date().toISOString(),
+      accounts,
+      holdings,
+      transactions,
+      performance,
+      overseasBalance,
+    };
+  }
+
+  private inferApiAccountType(accountProductCode: string): string {
+    switch (accountProductCode) {
+      case "01":
+        return "위탁계좌";
+      case "19":
+        return "개인연금";
+      case "21":
+        return "ISA";
+      default:
+        return `계좌상품 ${accountProductCode}`;
+    }
+  }
+
+  private get hasApiCredentialSet(): boolean {
+    return Boolean(this.config.korsec.appKey && this.config.korsec.secretKey);
+  }
+
+  private getPrimaryApiAccount(snapshot: KorSecApiAccountsSnapshot): KorSecApiAccount {
+    const account = snapshot.accounts[0];
+
+    if (!account) {
+      throw new UserVisibleError(
+        "한국투자증권 OpenAPI 계좌 요약에서 기본 계좌를 확인하지 못했습니다.",
+      );
+    }
+
+    return account;
+  }
+
+  private async tokenCacheExists(): Promise<boolean> {
+    try {
+      await access(this.config.korsec.tokenCachePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async readTokenCache(): Promise<KorSecApiTokenCache | undefined> {
+    try {
+      const raw = await readFile(this.config.korsec.tokenCachePath, "utf8");
+      return JSON.parse(raw) as KorSecApiTokenCache;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async writeTokenCache(cache: KorSecApiTokenCache): Promise<void> {
+    await mkdir(dirname(this.config.korsec.tokenCachePath), { recursive: true });
+    await writeFile(
+      this.config.korsec.tokenCachePath,
+      `${JSON.stringify(cache, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  private async issueApiAccessToken(forceRefresh = false): Promise<KorSecApiTokenCache> {
+    if (!this.hasApiCredentialSet) {
+      throw new UserVisibleError(
+        "한국투자증권 OpenAPI를 사용하려면 KORSEC_APP_KEY, KORSEC_SECRET_KEY 가 필요합니다.",
+      );
+    }
+
+    if (!forceRefresh) {
+      const cached = await this.readTokenCache();
+
+      if (cached?.accessToken && isTokenStillValid(cached.expiresAt)) {
+        return cached;
+      }
+    }
+
+    const response = await fetch(OPEN_API_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json;charset=UTF-8",
+        "User-Agent": HTTP_USER_AGENT,
+      },
+      body: JSON.stringify({
+        grant_type: "client_credentials",
+        appkey: this.config.korsec.appKey,
+        appsecret: this.config.korsec.secretKey,
+      }),
+    });
+    const rawText = await response.text();
+    let payload: Record<string, unknown> = {};
+
+    try {
+      payload = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
+    } catch {
+      payload = {};
+    }
+
+    if (!response.ok) {
+      throw new UserVisibleError(
+        [
+          "한국투자증권 OpenAPI 토큰 발급에 실패했습니다.",
+          typeof payload.error_description === "string" ? payload.error_description : rawText,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+    }
+
+    const accessToken =
+      typeof payload.access_token === "string" ? payload.access_token : undefined;
+
+    if (!accessToken) {
+      throw new UserVisibleError("한국투자증권 OpenAPI 토큰 응답에 access_token 이 없습니다.");
+    }
+
+    const cache: KorSecApiTokenCache = {
+      accessToken,
+      ...(typeof payload.access_token_token_expired === "string"
+        ? { expiresAt: payload.access_token_token_expired }
+        : {}),
+      savedAt: new Date().toISOString(),
+    };
+
+    await this.writeTokenCache(cache);
+    return cache;
+  }
+
+  private async resolveApiAccount(): Promise<{
+    accountNumber: string;
+    accountProductCode: string;
+    displayAccountNumber: string;
+  }> {
+    const explicitAccountNumber = normalizeText(this.config.korsec.accountNumber);
+    const explicitProductCode = normalizeText(this.config.korsec.accountProductCode);
+
+    if (explicitAccountNumber && explicitProductCode) {
+      return {
+        accountNumber: explicitAccountNumber.replace(/\D/gu, "").slice(0, 8),
+        accountProductCode: explicitProductCode.replace(/\D/gu, "").slice(0, 2),
+        displayAccountNumber: `${explicitAccountNumber.replace(/\D/gu, "").slice(0, 8)}-${explicitProductCode
+          .replace(/\D/gu, "")
+          .slice(0, 2)}`,
+      };
+    }
+
+    const inferred = await this.inferApiAccountFromDebugArtifacts();
+
+    if (inferred) {
+      return inferred;
+    }
+
+    throw new UserVisibleError(
+      "한국투자증권 OpenAPI는 계좌번호가 필요합니다. KORSEC_ACCOUNT_NUMBER(8자리), KORSEC_ACCOUNT_PRODUCT_CODE(2자리)를 설정하거나 기존 korsec 디버그 산출물을 남겨 주세요.",
+    );
+  }
+
+  private async inferApiAccountFromDebugArtifacts(): Promise<
+    | {
+        accountNumber: string;
+        accountProductCode: string;
+        displayAccountNumber: string;
+      }
+    | undefined
+  > {
+    try {
+      const files = await readdir(this.config.korsec.debugDir);
+
+      for (const fileName of files.sort().reverse()) {
+        if (!fileName.endsWith(".html")) {
+          continue;
+        }
+
+        const raw = await readFile(`${this.config.korsec.debugDir}/${fileName}`, "utf8");
+        const match = raw.match(/\b(\d{8})-(\d{2})\b/u);
+
+        if (match) {
+          return {
+            accountNumber: match[1]!,
+            accountProductCode: match[2]!,
+            displayAccountNumber: `${match[1]!}-${match[2]!}`,
+          };
+        }
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  private async callKorSecApi<T extends KorSecApiResponse>(
+    apiPath: string,
+    trId: string,
+    params: Record<string, string>,
+    options: {
+      trCont?: string;
+      forceRefreshToken?: boolean;
+    } = {},
+  ): Promise<{ payload: T; trCont: string }> {
+    const token = await this.issueApiAccessToken(options.forceRefreshToken ?? false);
+    const appKey = this.config.korsec.appKey;
+    const secretKey = this.config.korsec.secretKey;
+
+    if (!appKey || !secretKey) {
+      throw new UserVisibleError(
+        "한국투자증권 OpenAPI 요청에 필요한 KORSEC_APP_KEY/KORSEC_SECRET_KEY 가 없습니다.",
+      );
+    }
+    const url = new URL(apiPath, OPEN_API_BASE_URL);
+
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value);
+    }
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json;charset=UTF-8",
+        "User-Agent": HTTP_USER_AGENT,
+        authorization: `Bearer ${token.accessToken}`,
+        appkey: appKey,
+        appsecret: secretKey,
+        tr_id: trId,
+        tr_cont: options.trCont ?? "",
+        custtype: "P",
+      },
+    });
+    const rawText = await response.text();
+    let payload: T;
+
+    try {
+      payload = (rawText ? JSON.parse(rawText) : {}) as T;
+    } catch {
+      throw new UserVisibleError(
+        `한국투자증권 OpenAPI 응답을 해석하지 못했습니다 (${apiPath}).`,
+      );
+    }
+
+    if (!response.ok) {
+      throw new UserVisibleError(
+        [
+          `한국투자증권 OpenAPI 요청이 실패했습니다 (${apiPath}).`,
+          payload.msg1,
+          rawText,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+    }
+
+    if (payload.rt_cd && payload.rt_cd !== "0") {
+      throw new UserVisibleError(
+        `한국투자증권 OpenAPI 요청이 실패했습니다 (${trId}): ${payload.msg1 ?? payload.msg_cd ?? "알 수 없는 오류"}`,
+      );
+    }
+
+    return {
+      payload,
+      trCont: response.headers.get("tr_cont") ?? "",
+    };
+  }
+
+  private async fetchApiAccountBalanceRaw(
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<{ output1: Record<string, string>[]; output2: Record<string, string>[] }> {
+    const account = await this.resolveApiAccount();
+    const { payload } = await this.callKorSecApi(
+      "/uapi/domestic-stock/v1/trading/inquire-account-balance",
+      "CTRP6548R",
+      {
+        CANO: account.accountNumber,
+        ACNT_PRDT_CD: account.accountProductCode,
+        INQR_DVSN_1: "",
+        BSPR_BF_DT_APLY_YN: "",
+      },
+      {
+        ...(options.forceRefresh !== undefined
+          ? { forceRefreshToken: options.forceRefresh }
+          : {}),
+      },
+    );
+
+    return {
+      output1: toRecordArray(payload.output1),
+      output2: toRecordArray(payload.output2),
+    };
+  }
+
+  private async fetchApiDomesticBalanceRaw(
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<{ output1: Record<string, string>[]; output2: Record<string, string>[] }> {
+    const account = await this.resolveApiAccount();
+    let ctxAreaFk100 = "";
+    let ctxAreaNk100 = "";
+    let trCont = "";
+    let depth = 0;
+    const output1: Record<string, string>[] = [];
+    const output2: Record<string, string>[] = [];
+
+    while (depth < 10) {
+      const { payload, trCont: nextTrCont } = await this.callKorSecApi(
+        "/uapi/domestic-stock/v1/trading/inquire-balance",
+        "TTTC8434R",
+        {
+          CANO: account.accountNumber,
+          ACNT_PRDT_CD: account.accountProductCode,
+          AFHR_FLPR_YN: "N",
+          OFL_YN: "",
+          INQR_DVSN: "02",
+          UNPR_DVSN: "01",
+          FUND_STTL_ICLD_YN: "N",
+          FNCG_AMT_AUTO_RDPT_YN: "N",
+          PRCS_DVSN: "00",
+          CTX_AREA_FK100: ctxAreaFk100,
+          CTX_AREA_NK100: ctxAreaNk100,
+        },
+        {
+          trCont,
+          ...(options.forceRefresh !== undefined
+            ? { forceRefreshToken: options.forceRefresh }
+            : {}),
+        },
+      );
+      output1.push(...toRecordArray(payload.output1));
+      output2.push(...toRecordArray(payload.output2));
+      ctxAreaFk100 = payload.ctx_area_fk100 ?? "";
+      ctxAreaNk100 = payload.ctx_area_nk100 ?? "";
+
+      if (!["M", "F"].includes(nextTrCont)) {
+        break;
+      }
+
+      trCont = "N";
+      depth += 1;
+    }
+
+    return { output1, output2 };
+  }
+
+  private async fetchApiDailyCcldRaw(
+    query: { startDate: string; endDate: string },
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<{ output1: Record<string, string>[]; output2: Record<string, string>[] }> {
+    const account = await this.resolveApiAccount();
+    const start = new Date(
+      `${query.startDate.slice(0, 4)}-${query.startDate.slice(4, 6)}-${query.startDate.slice(6, 8)}T00:00:00+09:00`,
+    );
+    const end = new Date(
+      `${query.endDate.slice(0, 4)}-${query.endDate.slice(4, 6)}-${query.endDate.slice(6, 8)}T00:00:00+09:00`,
+    );
+    const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000);
+    const pdDv = days > 92 ? "before" : "inner";
+    const trId = pdDv === "before" ? "CTSC9215R" : "TTTC0081R";
+    let ctxAreaFk100 = "";
+    let ctxAreaNk100 = "";
+    let trCont = "";
+    let depth = 0;
+    const output1: Record<string, string>[] = [];
+    const output2: Record<string, string>[] = [];
+
+    while (depth < 10) {
+      const { payload, trCont: nextTrCont } = await this.callKorSecApi(
+        "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+        trId,
+        {
+          CANO: account.accountNumber,
+          ACNT_PRDT_CD: account.accountProductCode,
+          INQR_STRT_DT: query.startDate,
+          INQR_END_DT: query.endDate,
+          SLL_BUY_DVSN_CD: "00",
+          PDNO: "",
+          CCLD_DVSN: "00",
+          INQR_DVSN: "00",
+          INQR_DVSN_3: "00",
+          INQR_DVSN_1: "",
+          ORD_GNO_BRNO: "",
+          ODNO: "",
+          EXCG_ID_DVSN_CD: "KRX",
+          CTX_AREA_FK100: ctxAreaFk100,
+          CTX_AREA_NK100: ctxAreaNk100,
+        },
+        {
+          trCont,
+          ...(options.forceRefresh !== undefined
+            ? { forceRefreshToken: options.forceRefresh }
+            : {}),
+        },
+      );
+      output1.push(...toRecordArray(payload.output1));
+      output2.push(...toRecordArray(payload.output2));
+      ctxAreaFk100 = payload.ctx_area_fk100 ?? "";
+      ctxAreaNk100 = payload.ctx_area_nk100 ?? "";
+
+      if (!["M", "F"].includes(nextTrCont)) {
+        break;
+      }
+
+      trCont = "N";
+      depth += 1;
+    }
+
+    return { output1, output2 };
+  }
+
+  private async fetchApiPeriodProfitRaw(
+    query: { startDate: string; endDate: string },
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<{ output1: Record<string, string>[]; output2: Record<string, string>[] }> {
+    const account = await this.resolveApiAccount();
+    let ctxAreaFk100 = "";
+    let ctxAreaNk100 = "";
+    let trCont = "";
+    let depth = 0;
+    const output1: Record<string, string>[] = [];
+    const output2: Record<string, string>[] = [];
+
+    while (depth < 10) {
+      const { payload, trCont: nextTrCont } = await this.callKorSecApi(
+        "/uapi/domestic-stock/v1/trading/inquire-period-profit",
+        "TTTC8708R",
+        {
+          CANO: account.accountNumber,
+          ACNT_PRDT_CD: account.accountProductCode,
+          INQR_STRT_DT: query.startDate,
+          INQR_END_DT: query.endDate,
+          SORT_DVSN: "00",
+          INQR_DVSN: "00",
+          CBLC_DVSN: "00",
+          PDNO: "",
+          CTX_AREA_FK100: ctxAreaFk100,
+          CTX_AREA_NK100: ctxAreaNk100,
+        },
+        {
+          trCont,
+          ...(options.forceRefresh !== undefined
+            ? { forceRefreshToken: options.forceRefresh }
+            : {}),
+        },
+      );
+      output1.push(...toRecordArray(payload.output1));
+      output2.push(...toRecordArray(payload.output2));
+      ctxAreaFk100 = payload.ctx_area_fk100 ?? "";
+      ctxAreaNk100 = payload.ctx_area_nk100 ?? "";
+
+      if (!["M", "F"].includes(nextTrCont)) {
+        break;
+      }
+
+      trCont = "N";
+      depth += 1;
+    }
+
+    return { output1, output2 };
+  }
+
+  private async fetchApiPeriodTradeProfitRaw(
+    query: { startDate: string; endDate: string },
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<{ output1: Record<string, string>[]; output2: Record<string, string>[] }> {
+    const account = await this.resolveApiAccount();
+    let ctxAreaFk100 = "";
+    let ctxAreaNk100 = "";
+    let trCont = "";
+    let depth = 0;
+    const output1: Record<string, string>[] = [];
+    const output2: Record<string, string>[] = [];
+
+    while (depth < 10) {
+      const { payload, trCont: nextTrCont } = await this.callKorSecApi(
+        "/uapi/domestic-stock/v1/trading/inquire-period-trade-profit",
+        "TTTC8715R",
+        {
+          CANO: account.accountNumber,
+          ACNT_PRDT_CD: account.accountProductCode,
+          SORT_DVSN: "02",
+          INQR_STRT_DT: query.startDate,
+          INQR_END_DT: query.endDate,
+          CBLC_DVSN: "00",
+          PDNO: "",
+          CTX_AREA_FK100: ctxAreaFk100,
+          CTX_AREA_NK100: ctxAreaNk100,
+        },
+        {
+          trCont,
+          ...(options.forceRefresh !== undefined
+            ? { forceRefreshToken: options.forceRefresh }
+            : {}),
+        },
+      );
+      output1.push(...toRecordArray(payload.output1));
+      output2.push(...toRecordArray(payload.output2));
+      ctxAreaFk100 = payload.ctx_area_fk100 ?? "";
+      ctxAreaNk100 = payload.ctx_area_nk100 ?? "";
+
+      if (!["M", "F"].includes(nextTrCont)) {
+        break;
+      }
+
+      trCont = "N";
+      depth += 1;
+    }
+
+    return { output1, output2 };
+  }
+
+  private async fetchApiOverseasPresentBalanceRaw(
+    options: FetchBrokerAssetsOptions = {},
+  ): Promise<{
+    output1: Record<string, string>[];
+    output2: Record<string, string>[];
+    output3: Record<string, string>[];
+  }> {
+    const account = await this.resolveApiAccount();
+    const aggregated = {
+      output1: [] as Record<string, string>[],
+      output2: [] as Record<string, string>[],
+      output3: [] as Record<string, string>[],
+    };
+
+    for (const candidate of OVERSEAS_EXCHANGE_CANDIDATES) {
+      try {
+        const { payload } = await this.callKorSecApi(
+          "/uapi/overseas-stock/v1/trading/inquire-present-balance",
+          "CTRP6504R",
+          {
+            CANO: account.accountNumber,
+            ACNT_PRDT_CD: account.accountProductCode,
+            WCRC_FRCR_DVSN_CD: "01",
+            NATN_CD:
+              candidate.market === "SEHK"
+                ? "344"
+                : candidate.market === "SHAA" || candidate.market === "SZAA"
+                  ? "156"
+                  : candidate.market === "TKSE"
+                    ? "392"
+                    : candidate.market === "HASE" || candidate.market === "VNSE"
+                      ? "704"
+                      : "840",
+            TR_MKET_CD:
+              candidate.market === "NASD"
+                ? "01"
+                : candidate.market === "NYSE"
+                  ? "02"
+                  : candidate.market === "AMEX"
+                    ? "05"
+                    : candidate.market === "SEHK"
+                      ? "01"
+                      : candidate.market === "SHAA"
+                        ? "03"
+                        : candidate.market === "SZAA"
+                          ? "04"
+                          : candidate.market === "TKSE"
+                            ? "01"
+                            : candidate.market === "HASE"
+                              ? "01"
+                              : "02",
+            INQR_DVSN_CD: "00",
+          },
+          {
+            ...(options.forceRefresh !== undefined
+              ? { forceRefreshToken: options.forceRefresh }
+              : {}),
+          },
+        );
+        aggregated.output1.push(...toRecordArray(payload.output1));
+        aggregated.output2.push(...toRecordArray(payload.output2));
+        aggregated.output3.push(...toRecordArray(payload.output3));
+      } catch {
+        // 일부 시장은 계좌/보유 상태에 따라 오류가 날 수 있어 조용히 건너뜁니다.
+      }
+    }
+
+    return aggregated;
   }
 
   private hasCredentialSet(): boolean {

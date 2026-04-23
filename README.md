@@ -44,7 +44,7 @@ docker run -i --rm \
 | 신한투자증권 | `shinhansec` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | 삼성증권에 거의 준하는 수준 |
 | 미래에셋증권 | `miraeasset` | ✅ | ✅ | ✅ | ✅ | ❌ | ⚠️ | 현재는 자산 중심 지원 |
 | NH투자증권 | `nhsec` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | 세부 탭까지 폭넓게 연결됨 |
-| 한국투자증권 | `korsec` | ✅ | ✅ | ✅ | ⚠️ | ❌ | ⚠️ | ID 로그인 기준 자산/잔고 중심 지원 |
+| 한국투자증권 | `korsec` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | 브라우저(ID) + OpenAPI(app key/secret) 동시 지원 |
 | 키움증권 OpenAPI | `kiwoom` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | REST OpenAPI(app key/secret) 기반 지원 |
 
 ### 상세 매트릭스
@@ -54,29 +54,29 @@ docker run -i --rm \
 | 총자산 요약 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 계좌 목록 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 계좌별 상세 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ |
-| 국내주식 보유 | ⚠️* | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
+| 국내주식 보유 | ⚠️* | ✅ | ⚠️ | ✅ | ✅ | ✅ |
 | 해외주식 보유 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ |
 | 펀드 / 금융상품 보유 | ⚠️ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ |
 | 연금 / 퇴직연금 | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
 | 예수금 / 현금성 자산 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 외화 잔고 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ |
-| 종합 거래내역 | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ |
-| 입출금 내역 | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ |
-| 주식 거래내역 | ✅ | ✅ | ❌ | ⚠️ | ❌ | ✅ |
+| 종합 거래내역 | ✅ | ✅ | ❌ | ✅ | ⚠️** | ✅ |
+| 입출금 내역 | ✅ | ✅ | ❌ | ✅ | ⚠️** | ✅ |
+| 주식 거래내역 | ✅ | ✅ | ❌ | ⚠️ | ⚠️** | ✅ |
 | 펀드 거래내역 | ⚠️ | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Wrap / RP / MMW 거래 | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ |
 | 포트폴리오 분석 | ✅ | ✅ | ⚠️ | ❌ | ❌ | ⚠️ |
-| 일별 / 월별 성과 이력 | ✅ | ⚠️ | ❌ | ❌ | ❌ | ⚠️ |
-| Deep Snapshot | ✅ | ✅ | ✅** | ✅ | ✅** | ✅ |
+| 일별 / 월별 성과 이력 | ✅ | ⚠️ | ❌ | ❌ | ⚠️** | ⚠️ |
+| Deep Snapshot | ✅ | ✅ | ✅** | ✅ | ✅ | ✅ |
 
 \* 삼성증권 국내주식 파서는 구현되어 있으나, 실계정 기준 검증 범위는 제한적입니다.  
-\** 미래에셋/한국투자 `Deep Snapshot`은 현재 자산 중심입니다.
+\** 한국투자증권의 거래/성과는 OpenAPI(`KORSEC_AUTH_MODE=api`)에서만 지원됩니다. 미래에셋 `Deep Snapshot`은 현재 자산 중심입니다.
 
 ## 최근 변경 사항
 
 | 날짜 | 변경 내용 |
 | --- | --- |
-| 2026-04-23 | 미래에셋 자산/보유내역 지원 추가, NH 구조화 계좌/보유/거래내역 및 세부 잔고·특수 자산 탭 확장, 한국투자증권 자산현황(요약)/종합잔고평가/상품 탭 수집 추가, 키움 OpenAPI 자산/계좌/보유종목/거래내역/기간성과 지원 추가 |
+| 2026-04-23 | 미래에셋 자산/보유내역 지원 추가, NH 구조화 계좌/보유/거래내역 및 세부 잔고·특수 자산 탭 확장, 한국투자증권 브라우저 자산현황 + OpenAPI(계좌/잔고/거래/성과) 지원 추가, 키움 OpenAPI 자산/계좌/보유종목/거래내역/기간성과 지원 추가 |
 | 2026-04-22 | 신한투자증권 자산/거래/금융상품 범위 확장, normalized 툴 추가 |
 | 2026-04-21 | 삼성증권 기반 MCP 서버 최초 공개 |
 
@@ -189,20 +189,30 @@ npm run auth:nhsec
 ### 한국투자증권
 
 ```dotenv
+KORSEC_AUTH_MODE=api
+KORSEC_APP_KEY=...
+KORSEC_SECRET_KEY=...
+KORSEC_ACCOUNT_NUMBER=12345678
+KORSEC_ACCOUNT_PRODUCT_CODE=01
+```
+
+브라우저(ID 로그인) 모드 예시:
+
+```dotenv
 KORSEC_AUTH_MODE=credentials
 KORSEC_USER_ID=...
 KORSEC_USER_PASSWORD=...
 ```
 
-수동 세션 저장:
+세션/토큰 설정:
 
 ```bash
 npm run auth:korsec
 ```
 
-> 현재 한국투자증권은 ID 로그인 기준 `자산현황(요약)`, `자산현황(종합잔고평가)`, `주식/펀드/CMA/랩/채권/RP/IMA` 탭별 잔고 요약까지 지원합니다.
-> `계좌상세정보`, `해외계좌`, `거래내역` 계열은 추가 인증을 요구해 현재 미지원입니다.
-> `get_all_transactions` 통합 조회에서는 한국투자증권이 자동으로 제외됩니다.
+> 브라우저(ID 로그인) 모드에서는 `자산현황(요약)`, `자산현황(종합잔고평가)`, `주식/펀드/CMA/랩/채권/RP/IMA` 탭별 잔고 요약까지 지원합니다.
+> OpenAPI 모드에서는 계좌/국내·해외 잔고/거래내역/기간 손익/해외잔고까지 지원하며, `get_all_transactions` 통합 조회에도 포함됩니다.
+> OpenAPI는 공식 KIS Developers App Key/App Secret과 계좌번호(8자리)+상품코드(2자리)가 있으면 가장 안정적으로 동작합니다.
 
 
 ### 키움증권 OpenAPI
@@ -303,7 +313,7 @@ aggregate 툴은 브로커별 상태를 함께 반환합니다:
 
 - `successBrokerIds`
 - `failedBrokerIds`
-- `skippedBrokerIds` (`get_all_transactions`에서 미래에셋증권 등 통합 제외 브로커 표시)
+- `skippedBrokerIds` (`get_all_transactions`에서 미래에셋증권, 한국투자증권 브라우저 모드 등 통합 제외 브로커 표시)
 - `get_portfolio_overview`는 자산/계좌/보유내역/최근 거래를 한 번에 합쳐 상위 포트폴리오 요약을 제공합니다.
 
 ## 제공 툴
@@ -406,6 +416,9 @@ aggregate 툴은 브로커별 상태를 함께 반환합니다:
 - `get_korsec_product_balances`
 - `get_korsec_accounts`
 - `get_korsec_holdings`
+- `get_korsec_transactions`
+- `get_korsec_performance`
+- `get_korsec_overseas_balance`
 - `get_korsec_deep_snapshot`
 
 ### 키움증권 OpenAPI
