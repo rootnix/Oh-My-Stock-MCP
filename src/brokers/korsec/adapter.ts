@@ -240,6 +240,21 @@ function firstMeaningfulValue(
   return undefined;
 }
 
+function firstPresentValue(
+  record: Record<string, string>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = normalizeText(record[key]);
+
+    if (value && value !== "-" && value !== "--" && value !== "미조회") {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function uniqueBy<T>(items: T[], getKey: (item: T) => string): T[] {
   const seen = new Set<string>();
   const result: T[] = [];
@@ -1271,7 +1286,7 @@ export class KorSecBroker implements BrokerAdapter {
     );
     const domesticHoldings = domesticBalance.output1.flatMap((record) => {
       const productCode = firstMeaningfulValue(record, ["pdno", "mksc_shrn_iscd"]);
-      const productName = firstMeaningfulValue(record, [
+      const productName = firstPresentValue(record, [
         "prdt_name",
         "prdt_abrv_name",
       ]);
@@ -1320,8 +1335,8 @@ export class KorSecBroker implements BrokerAdapter {
     });
     const overseasHoldings = uniqueBy(
       [...overseas.output1, ...overseas.output2, ...overseas.output3].flatMap((record) => {
-        const productCode = firstMeaningfulValue(record, ["ovrs_pdno", "pdno", "std_pdno"]);
-        const productName = firstMeaningfulValue(record, ["ovrs_item_name", "prdt_name"]);
+        const productCode = firstPresentValue(record, ["ovrs_pdno", "pdno", "std_pdno"]);
+        const productName = firstPresentValue(record, ["ovrs_item_name", "prdt_name"]);
 
         if (!productCode && !productName) {
           return [];
@@ -1335,8 +1350,8 @@ export class KorSecBroker implements BrokerAdapter {
           ...(productCode ? { productCode } : {}),
           ...(productName ? { productName } : {}),
           ...withDefinedStrings({
-            market: firstMeaningfulValue(record, ["tr_mket_name", "ovrs_excg_cd"]),
-            currency: firstMeaningfulValue(record, ["crcy_cd", "buy_crcy_cd"]),
+            market: firstPresentValue(record, ["tr_mket_name", "ovrs_excg_cd"]),
+            currency: firstPresentValue(record, ["crcy_cd", "buy_crcy_cd"]),
             quantity: firstMeaningfulValue(record, [
               "cblc_qty13",
               "ovrs_cblc_qty",
@@ -1404,11 +1419,11 @@ export class KorSecBroker implements BrokerAdapter {
     const daily = await this.fetchApiDailyCcldRaw(query, options);
     const transactions: KorSecApiTransactionRecord[] = daily.output1.flatMap((record) => {
       const orderNumber = firstMeaningfulValue(record, ["odno"]);
-      const productCode = firstMeaningfulValue(record, ["pdno"]);
-      const productName = firstMeaningfulValue(record, ["prdt_name"]);
+      const productCode = firstPresentValue(record, ["pdno"]);
+      const productName = firstPresentValue(record, ["prdt_name"]);
       const label = [
-        firstMeaningfulValue(record, ["sll_buy_dvsn_cd_name"]),
-        firstMeaningfulValue(record, ["trad_dvsn_name", "ord_dvsn_name"]),
+        firstPresentValue(record, ["sll_buy_dvsn_cd_name"]),
+        firstPresentValue(record, ["trad_dvsn_name", "ord_dvsn_name"]),
       ]
         .filter(Boolean)
         .join(" / ");
@@ -1493,8 +1508,8 @@ export class KorSecBroker implements BrokerAdapter {
       ];
     });
     const trades: KorSecApiPerformanceRecord[] = periodTradeProfit.output1.flatMap((record) => {
-      const productCode = firstMeaningfulValue(record, ["pdno"]);
-      const productName = firstMeaningfulValue(record, ["prdt_name"]);
+      const productCode = firstPresentValue(record, ["pdno"]);
+      const productName = firstPresentValue(record, ["prdt_name"]);
 
       if (!productCode && !productName) {
         return [];
@@ -1548,8 +1563,8 @@ export class KorSecBroker implements BrokerAdapter {
     const rawHoldings = [...overseas.output1, ...overseas.output2, ...overseas.output3];
     const holdings = uniqueBy(
       rawHoldings.flatMap((record) => {
-        const productCode = firstMeaningfulValue(record, ["ovrs_pdno", "pdno", "std_pdno"]);
-        const productName = firstMeaningfulValue(record, ["ovrs_item_name", "prdt_name"]);
+        const productCode = firstPresentValue(record, ["ovrs_pdno", "pdno", "std_pdno"]);
+        const productName = firstPresentValue(record, ["ovrs_item_name", "prdt_name"]);
 
         if (!productCode && !productName) {
           return [];
@@ -1564,8 +1579,8 @@ export class KorSecBroker implements BrokerAdapter {
             ...(productCode ? { productCode } : {}),
             ...(productName ? { productName } : {}),
             ...withDefinedStrings({
-              market: firstMeaningfulValue(record, ["tr_mket_name", "ovrs_excg_cd"]),
-              currency: firstMeaningfulValue(record, ["crcy_cd", "buy_crcy_cd"]),
+              market: firstPresentValue(record, ["tr_mket_name", "ovrs_excg_cd"]),
+              currency: firstPresentValue(record, ["crcy_cd", "buy_crcy_cd"]),
               quantity: firstMeaningfulValue(record, [
                 "cblc_qty13",
                 "ovrs_cblc_qty",

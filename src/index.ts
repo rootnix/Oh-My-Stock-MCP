@@ -82,6 +82,20 @@ const optionalMonthSchema = z
   .regex(/^\d{4}-\d{2}$/u, "YYYY-MM 형식이어야 합니다.")
   .optional();
 
+function formatCompactDate(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const digits = value.replace(/\D/gu, "");
+
+  if (digits.length !== 8) {
+    return value;
+  }
+
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+}
+
 function getSamsungPopBroker(): SamsungPopBroker {
   const broker = getBrokerOrThrow(registry, "samsungpop");
 
@@ -576,6 +590,16 @@ async function fetchNormalizedTransactionsForBroker(
       ...toFetchOptions(options),
     });
     const transactions = normalizeKorSecApiTransactions(snapshot);
+    const query: { startDate?: string; endDate?: string } = {};
+    const formattedStartDate = formatCompactDate(snapshot.query.startDate);
+    const formattedEndDate = formatCompactDate(snapshot.query.endDate);
+
+    if (formattedStartDate) {
+      query.startDate = formattedStartDate;
+    }
+    if (formattedEndDate) {
+      query.endDate = formattedEndDate;
+    }
     const filteredTransactions = options.accountNumber
       ? transactions.filter((item) => item.accountNumber === options.accountNumber)
       : transactions;
@@ -585,10 +609,7 @@ async function fetchNormalizedTransactionsForBroker(
       brokerName: snapshot.brokerName,
       capturedAt: snapshot.capturedAt,
       ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
-      query: {
-        startDate: snapshot.query.startDate,
-        endDate: snapshot.query.endDate,
-      },
+      query,
       sourceTypes: ["broker_specific"],
       transactions: filteredTransactions,
     };
@@ -4262,7 +4283,10 @@ server.registerTool(
         brokerId: snapshot.brokerId,
         brokerName: snapshot.brokerName,
         capturedAt: snapshot.capturedAt,
-        query: snapshot.query,
+        query: {
+          startDate: formatCompactDate(snapshot.query.startDate),
+          endDate: formatCompactDate(snapshot.query.endDate),
+        },
         count: transactions.length,
         byKind: countBy(transactions.map((item) => item.kind ?? "unknown")),
         transactions,
