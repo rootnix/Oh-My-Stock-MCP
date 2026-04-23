@@ -265,8 +265,10 @@ Docker 실행 예시:
 ## 공통 normalized 툴
 
 - `get_all_assets`
+- `get_all_accounts`
 - `get_all_holdings`
 - `get_all_transactions`
+- `get_portfolio_overview`
 - `get_normalized_asset_summary`
 - `get_normalized_accounts`
 - `get_normalized_holdings`
@@ -283,6 +285,7 @@ aggregate 툴은 브로커별 상태를 함께 반환합니다:
 - `successBrokerIds`
 - `failedBrokerIds`
 - `skippedBrokerIds` (`get_all_transactions`에서 미래에셋증권 등 통합 제외 브로커 표시)
+- `get_portfolio_overview`는 자산/계좌/보유내역/최근 거래를 한 번에 합쳐 상위 포트폴리오 요약을 제공합니다.
 
 ## 제공 툴
 
@@ -292,8 +295,10 @@ aggregate 툴은 브로커별 상태를 함께 반환합니다:
 - `get_broker_auth_status`
 - `get_asset_snapshot`
 - `get_all_assets`
+- `get_all_accounts`
 - `get_all_holdings`
 - `get_all_transactions`
+- `get_portfolio_overview`
 - `get_normalized_asset_summary`
 - `get_normalized_accounts`
 - `get_normalized_holdings`
