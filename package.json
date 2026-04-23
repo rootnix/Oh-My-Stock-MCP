@@ -22,7 +22,8 @@
     "auth:shinhansec": "tsx src/scripts/auth-shinhansec.ts",
     "auth:miraeasset": "tsx src/scripts/auth-miraeasset.ts",
     "auth:nhsec": "tsx src/scripts/auth-nhsec.ts",
-    "auth:korsec": "tsx src/scripts/auth-korsec.ts"
+    "auth:korsec": "tsx src/scripts/auth-korsec.ts",
+    "auth:kiwoom": "tsx src/scripts/auth-kiwoom.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

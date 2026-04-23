@@ -57,6 +57,12 @@ export type AppConfig = {
     debugDir: string;
     loginTimeoutMs: number;
   };
+  kiwoom: {
+    authMode: AuthMode;
+    appKey?: string;
+    secretKey?: string;
+    tokenCachePath: string;
+  };
 };
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -73,7 +79,11 @@ function cleanOptional(value: string | undefined): string | undefined {
 }
 
 function parseAuthMode(value: string | undefined): AuthMode {
-  return value === "credentials" ? "credentials" : "manual_session";
+  if (value === "credentials" || value === "api") {
+    return value;
+  }
+
+  return "manual_session";
 }
 
 export function loadConfig(): AppConfig {
@@ -101,6 +111,8 @@ export function loadConfig(): AppConfig {
   const nhSecPassword = cleanOptional(process.env.NHSEC_USER_PASSWORD);
   const korSecUserId = cleanOptional(process.env.KORSEC_USER_ID);
   const korSecPassword = cleanOptional(process.env.KORSEC_USER_PASSWORD);
+  const kiwoomAppKey = cleanOptional(process.env.KIWOOM_APP_KEY);
+  const kiwoomSecretKey = cleanOptional(process.env.KIWOOM_SECRET_KEY);
 
   return {
     rootDir,
@@ -155,6 +167,12 @@ export function loadConfig(): AppConfig {
       loginTimeoutMs: 90_000,
       ...(korSecUserId ? { userId: korSecUserId } : {}),
       ...(korSecPassword ? { password: korSecPassword } : {}),
+    },
+    kiwoom: {
+      authMode: parseAuthMode(process.env.KIWOOM_AUTH_MODE),
+      tokenCachePath: path.join(dataDir, "sessions", "kiwoom.token.json"),
+      ...(kiwoomAppKey ? { appKey: kiwoomAppKey } : {}),
+      ...(kiwoomSecretKey ? { secretKey: kiwoomSecretKey } : {}),
     },
   };
 }

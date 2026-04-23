@@ -2,6 +2,7 @@ import type { AppConfig } from "../config.js";
 import type { BrokerId } from "../types.js";
 import { UserVisibleError } from "../lib/errors.js";
 import type { BrokerAdapter } from "./base.js";
+import { KiwoomBroker } from "./kiwoom/adapter.js";
 import { KorSecBroker } from "./korsec/adapter.js";
 import { MiraeAssetBroker } from "./miraeasset/adapter.js";
 import { NhSecBroker } from "./nhsec/adapter.js";
@@ -17,6 +18,7 @@ export function createBrokerRegistry(config: AppConfig): BrokerRegistry {
     miraeasset: new MiraeAssetBroker(config),
     nhsec: new NhSecBroker(config),
     korsec: new KorSecBroker(config),
+    kiwoom: new KiwoomBroker(config),
   };
 }
 

@@ -1,6 +1,12 @@
-export type BrokerId = "samsungpop" | "shinhansec" | "miraeasset" | "nhsec" | "korsec";
+export type BrokerId =
+  | "samsungpop"
+  | "shinhansec"
+  | "miraeasset"
+  | "nhsec"
+  | "korsec"
+  | "kiwoom";
 
-export type AuthMode = "manual_session" | "credentials";
+export type AuthMode = "manual_session" | "credentials" | "api";
 
 export type ExtractedKeyValue = {
   label: string;
@@ -1013,6 +1019,198 @@ export type KorSecDeepSnapshot = {
   productBalances: KorSecProductBalancesSnapshot;
 };
 
+export type KiwoomSummary = {
+  ownerName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  branchName?: string;
+  standardDate?: string;
+  totalAsset?: string;
+  investmentAmount?: string;
+  evaluationAmount?: string;
+  withdrawableAmount?: string;
+  d2Deposit?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  rawSummary: Record<string, string>;
+};
+
+export type KiwoomAccount = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  ownerName?: string;
+  accountName?: string;
+  branchName?: string;
+  totalAsset?: string;
+  investmentAmount?: string;
+  evaluationAmount?: string;
+  withdrawableAmount?: string;
+  d2Deposit?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  raw: Record<string, string>;
+};
+
+export type KiwoomAccountsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  accounts: KiwoomAccount[];
+};
+
+export type KiwoomHolding = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  ownerName?: string;
+  branchName?: string;
+  productCode?: string;
+  productName?: string;
+  quantity?: string;
+  orderableQuantity?: string;
+  currentPrice?: string;
+  purchasePrice?: string;
+  purchaseAmount?: string;
+  evaluationAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  settlementRemaining?: string;
+  todayBuyQuantity?: string;
+  todaySellQuantity?: string;
+  raw: Record<string, string>;
+};
+
+export type KiwoomHoldingsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  account: KiwoomAccount;
+  totals: {
+    cashBalance?: string;
+    d2Deposit?: string;
+    totalAsset?: string;
+    evaluationAmount?: string;
+    purchaseAmount?: string;
+    profitLoss?: string;
+    returnRate?: string;
+  };
+  holdings: KiwoomHolding[];
+};
+
+export type KiwoomTransactionRecord = {
+  accountNumber: string;
+  displayAccountNumber: string;
+  transactionDate?: string;
+  transactionTime?: string;
+  transactionNumber?: string;
+  transactionKind?: string;
+  transactionLabel?: string;
+  detailType?: string;
+  productCode?: string;
+  productName?: string;
+  amount?: string;
+  foreignAmount?: string;
+  executedAmount?: string;
+  balanceAfter?: string;
+  currency?: string;
+  fee?: string;
+  tax?: string;
+  quantity?: string;
+  mediaType?: string;
+  processor?: string;
+  branchName?: string;
+  ioType?: string;
+  ioTypeName?: string;
+  raw: Record<string, string>;
+};
+
+export type KiwoomTransactionsSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  account: KiwoomAccount;
+  query: {
+    startDate: string;
+    endDate: string;
+    transactionType: string;
+    productType: string;
+  };
+  transactions: KiwoomTransactionRecord[];
+  continuation?: {
+    contYn?: string;
+    nextKey?: string;
+  };
+};
+
+export type KiwoomDailyBalanceReturnSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  account: KiwoomAccount;
+  queryDate: string;
+  totals: {
+    purchaseAmount?: string;
+    evaluationAmount?: string;
+    profitLoss?: string;
+    returnRate?: string;
+    depositBalance?: string;
+    dailyAssetAmount?: string;
+    buyWeight?: string;
+  };
+  holdings: Array<{
+    productCode?: string;
+    productName?: string;
+    quantity?: string;
+    purchasePrice?: string;
+    purchaseAmount?: string;
+    evaluationAmount?: string;
+    evaluationWeight?: string;
+    profitLoss?: string;
+    returnRate?: string;
+    raw: Record<string, string>;
+  }>;
+};
+
+export type KiwoomPeriodPerformanceSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  account: KiwoomAccount;
+  query: {
+    startDate: string;
+    endDate: string;
+  };
+  managerEmployeeNo?: string;
+  managerName?: string;
+  departmentName?: string;
+  entranceAmountStart?: string;
+  entranceAmountEnd?: string;
+  totalAmountStart?: string;
+  totalAmountEnd?: string;
+  investmentBaseAmount?: string;
+  profitLoss?: string;
+  returnRate?: string;
+  annualizedReturnRate?: string;
+  totalDeposit?: string;
+  totalWithdrawal?: string;
+  totalDepositWithdrawal?: string;
+  totalOutflow?: string;
+  futureReplacementAmount?: string;
+  trustReplacementAmount?: string;
+  raw: Record<string, string>;
+};
+
+export type KiwoomDeepSnapshot = {
+  brokerId: BrokerId;
+  brokerName: string;
+  capturedAt: string;
+  assetSnapshot: BrokerAssetSnapshot;
+  accounts: KiwoomAccountsSnapshot;
+  holdings: KiwoomHoldingsSnapshot;
+  transactions: KiwoomTransactionsSnapshot;
+  dailyBalanceReturn: KiwoomDailyBalanceReturnSnapshot;
+  periodPerformance: KiwoomPeriodPerformanceSnapshot;
+};
+
 export type NhSecSummary = {
   ownerName?: string;
   standardDate?: string;
@@ -1531,6 +1729,21 @@ export type BrokerAssetSnapshot = {
     investmentAmount?: string;
     evaluationAmount?: string;
     withdrawableAmount?: string;
+    profitLoss?: string;
+    returnRate?: string;
+    rawSummary?: Record<string, string>;
+  };
+  kiwoomAssetAnalysis?: {
+    ownerName?: string;
+    accountNumber?: string;
+    accountName?: string;
+    branchName?: string;
+    standardDate?: string;
+    totalAsset?: string;
+    investmentAmount?: string;
+    evaluationAmount?: string;
+    withdrawableAmount?: string;
+    d2Deposit?: string;
     profitLoss?: string;
     returnRate?: string;
     rawSummary?: Record<string, string>;

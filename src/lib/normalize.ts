@@ -1,5 +1,8 @@
 import type {
   BrokerAssetSnapshot,
+  KiwoomAccountsSnapshot,
+  KiwoomHoldingsSnapshot,
+  KiwoomTransactionsSnapshot,
   KorSecPageSnapshot,
   MiraeAssetPageSnapshot,
   NhSecBalancesSnapshot,
@@ -1367,4 +1370,160 @@ export function normalizeShinhanTransactions({
         `${left.transactionDate ?? ""}${left.transactionTime ?? ""}`,
       ),
   );
+}
+
+
+export function normalizeKiwoomAssetSummary(
+  snapshot: BrokerAssetSnapshot,
+): NormalizedAssetSummary {
+  const summary = snapshot.kiwoomAssetAnalysis;
+  const accountCount = summary?.accountNumber ? 1 : undefined;
+
+  return {
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    pageTitle: snapshot.pageTitle,
+    pageUrl: snapshot.pageUrl,
+    ...(summary?.ownerName ? { ownerName: summary.ownerName } : {}),
+    ...(summary?.standardDate ? { standardDate: summary.standardDate } : {}),
+    ...(summary?.totalAsset ? { totalAssetRaw: summary.totalAsset } : {}),
+    ...withParsedNumber("totalAssetValue", summary?.totalAsset),
+    ...(summary?.investmentAmount
+      ? { investmentAmountRaw: summary.investmentAmount }
+      : {}),
+    ...withParsedNumber("investmentAmountValue", summary?.investmentAmount),
+    ...(summary?.evaluationAmount
+      ? { evaluationAmountRaw: summary.evaluationAmount }
+      : {}),
+    ...withParsedNumber("evaluationAmountValue", summary?.evaluationAmount),
+    ...(summary?.withdrawableAmount
+      ? { withdrawableAmountRaw: summary.withdrawableAmount }
+      : {}),
+    ...withParsedNumber("withdrawableAmountValue", summary?.withdrawableAmount),
+    ...(summary?.profitLoss ? { profitLossRaw: summary.profitLoss } : {}),
+    ...withParsedNumber("profitLossValue", summary?.profitLoss),
+    ...(summary?.returnRate ? { returnRateRaw: summary.returnRate } : {}),
+    ...withParsedNumber("returnRateValue", summary?.returnRate),
+    ...(accountCount !== undefined ? { accountCount } : {}),
+  };
+}
+
+export function normalizeKiwoomAccounts(
+  snapshot: KiwoomAccountsSnapshot,
+): NormalizedAccount[] {
+  return snapshot.accounts.map((account) => ({
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    accountNumber: account.accountNumber,
+    displayAccountNumber: account.displayAccountNumber,
+    ...(account.accountName ? { accountType: account.accountName } : {}),
+    ...(account.ownerName ? { ownerName: account.ownerName } : {}),
+    ...(account.totalAsset ? { totalAssetRaw: account.totalAsset } : {}),
+    ...withParsedNumber("totalAssetValue", account.totalAsset),
+    ...(account.withdrawableAmount
+      ? { withdrawableAmountRaw: account.withdrawableAmount }
+      : {}),
+    ...withParsedNumber("withdrawableAmountValue", account.withdrawableAmount),
+    raw: account.raw,
+  }));
+}
+
+export function normalizeKiwoomHoldings(
+  snapshot: KiwoomHoldingsSnapshot,
+): NormalizedHolding[] {
+  return snapshot.holdings.map((holding) => ({
+    brokerId: snapshot.brokerId,
+    brokerName: snapshot.brokerName,
+    capturedAt: snapshot.capturedAt,
+    accountNumber: holding.accountNumber,
+    displayAccountNumber: holding.displayAccountNumber,
+    ...(holding.ownerName ? { ownerName: holding.ownerName } : {}),
+    category: "domestic_stock" as const,
+    ...(holding.productName ? { productName: holding.productName } : {}),
+    ...(holding.productCode ? { productCode: holding.productCode } : {}),
+    ...(holding.quantity ? { quantityRaw: holding.quantity } : {}),
+    ...withParsedNumber("quantityValue", holding.quantity),
+    ...(holding.orderableQuantity
+      ? { orderableQuantityRaw: holding.orderableQuantity }
+      : {}),
+    ...withParsedNumber("orderableQuantityValue", holding.orderableQuantity),
+    ...(holding.purchasePrice ? { purchasePriceRaw: holding.purchasePrice } : {}),
+    ...withParsedNumber("purchasePriceValue", holding.purchasePrice),
+    ...(holding.currentPrice ? { currentPriceRaw: holding.currentPrice } : {}),
+    ...withParsedNumber("currentPriceValue", holding.currentPrice),
+    ...(holding.purchaseAmount ? { purchaseAmountRaw: holding.purchaseAmount } : {}),
+    ...withParsedNumber("purchaseAmountValue", holding.purchaseAmount),
+    ...(holding.evaluationAmount
+      ? { evaluationAmountRaw: holding.evaluationAmount }
+      : {}),
+    ...withParsedNumber("evaluationAmountValue", holding.evaluationAmount),
+    ...(holding.profitLoss ? { profitLossRaw: holding.profitLoss } : {}),
+    ...withParsedNumber("profitLossValue", holding.profitLoss),
+    ...(holding.returnRate ? { returnRateRaw: holding.returnRate } : {}),
+    ...withParsedNumber("returnRateValue", holding.returnRate),
+    raw: holding.raw,
+  }));
+}
+
+export function normalizeKiwoomTransactions(
+  snapshot: KiwoomTransactionsSnapshot,
+): NormalizedTransaction[] {
+  return snapshot.transactions.map((transaction) => {
+    const hint = [
+      transaction.transactionKind,
+      transaction.transactionLabel,
+      transaction.detailType,
+      transaction.ioTypeName,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const inferredKind = inferTransactionKindFromText(hint) ?? "unknown";
+    const kind = normalizeTransactionKind(inferredKind) ?? "unknown";
+    const direction = transaction.ioTypeName === "입금"
+      ? "in"
+      : transaction.ioTypeName === "출금"
+        ? "out"
+        : inferDirectionFromKind(kind) ?? "neutral";
+    const assetCategory = transaction.productCode || transaction.productName
+      ? "domestic_stock"
+      : "cash";
+
+    return {
+      brokerId: snapshot.brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      sourceType: "broker_specific" as const,
+      accountNumber: transaction.accountNumber,
+      displayAccountNumber: transaction.displayAccountNumber,
+      ...(transaction.transactionDate ? { transactionDate: transaction.transactionDate } : {}),
+      ...(transaction.transactionTime ? { transactionTime: transaction.transactionTime } : {}),
+      ...(transaction.transactionLabel ? { label: transaction.transactionLabel } : {}),
+      ...(transaction.transactionKind ? { detailType: transaction.transactionKind } : {}),
+      ...(transaction.productName ? { productName: transaction.productName } : {}),
+      ...(transaction.productCode ? { productCode: transaction.productCode } : {}),
+      ...(transaction.currency ? { currency: transaction.currency } : {}),
+      ...(transaction.quantity ? { quantityRaw: transaction.quantity } : {}),
+      ...withParsedNumber("quantityValue", transaction.quantity),
+      ...(transaction.amount ? { amountRaw: transaction.amount } : {}),
+      ...withParsedNumber("amountValue", transaction.amount),
+      ...(transaction.executedAmount
+        ? { settlementAmountRaw: transaction.executedAmount }
+        : {}),
+      ...withParsedNumber("settlementAmountValue", transaction.executedAmount),
+      ...(transaction.balanceAfter ? { balanceAfterRaw: transaction.balanceAfter } : {}),
+      ...withParsedNumber("balanceAfterValue", transaction.balanceAfter),
+      ...(transaction.fee ? { feeRaw: transaction.fee } : {}),
+      ...withParsedNumber("feeValue", transaction.fee),
+      ...(transaction.tax ? { taxRaw: transaction.tax } : {}),
+      ...withParsedNumber("taxValue", transaction.tax),
+      ...(transaction.processor ? { counterparty: transaction.processor } : {}),
+      ...(transaction.mediaType ? { channel: transaction.mediaType } : {}),
+      kind,
+      direction,
+      assetCategory,
+      raw: transaction.raw,
+    };
+  });
 }

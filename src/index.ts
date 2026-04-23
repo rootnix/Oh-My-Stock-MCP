@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { KiwoomBroker } from "./brokers/kiwoom/adapter.js";
 import { KorSecBroker } from "./brokers/korsec/adapter.js";
 import { MiraeAssetBroker } from "./brokers/miraeasset/adapter.js";
 import { NhSecBroker } from "./brokers/nhsec/adapter.js";
@@ -11,6 +12,10 @@ import { loadConfig } from "./config.js";
 import { createBrokerRegistry, getBrokerOrThrow } from "./brokers/registry.js";
 import { getErrorMessage } from "./lib/errors.js";
 import {
+  normalizeKiwoomAccounts,
+  normalizeKiwoomAssetSummary,
+  normalizeKiwoomHoldings,
+  normalizeKiwoomTransactions,
   normalizeKorSecAccounts,
   normalizeKorSecAssetSummary,
   normalizeKorSecHoldings,
@@ -41,7 +46,7 @@ import type {
 const config = loadConfig();
 const registry = createBrokerRegistry(config);
 
-const brokerIdSchema = z.enum(["samsungpop", "shinhansec", "miraeasset", "nhsec", "korsec"]);
+const brokerIdSchema = z.enum(["samsungpop", "shinhansec", "miraeasset", "nhsec", "korsec", "kiwoom"]);
 const brokerIdsSchema = z.array(brokerIdSchema).min(1).optional();
 const shinhanFinancialTransactionCategorySchema = z.enum([
   "fund",
@@ -123,6 +128,16 @@ function getKorSecBroker(): KorSecBroker {
   return broker;
 }
 
+function getKiwoomBroker(): KiwoomBroker {
+  const broker = getBrokerOrThrow(registry, "kiwoom");
+
+  if (!(broker instanceof KiwoomBroker)) {
+    throw new Error("키움 OpenAPI 브로커 인스턴스를 확인하지 못했습니다.");
+  }
+
+  return broker;
+}
+
 const server = new McpServer(
   {
     name: "my-stock-mcp",
@@ -130,7 +145,7 @@ const server = new McpServer(
   },
   {
     instructions:
-      "한국 증권사 웹사이트에서 자산/계좌 정보를 읽는 로컬 MCP 서버입니다. 먼저 list_brokers 또는 get_broker_auth_status 로 인증 상태를 확인한 뒤, 필요하면 증권사별 setup_*_session 도구로 로그인 세션을 준비하고 get_asset_snapshot 을 호출하세요.",
+      "한국 증권사 자산/계좌 정보를 읽는 로컬 MCP 서버입니다. 먼저 list_brokers 또는 get_broker_auth_status 로 인증 상태를 확인하세요. 웹 로그인 브로커는 필요하면 setup_*_session 도구로 세션을 준비하고, API 브로커(예: kiwoom)는 .env 자격증명만 설정한 뒤 get_asset_snapshot 또는 normalized 도구를 호출하세요.",
   },
 );
 
@@ -225,6 +240,8 @@ async function fetchNormalizedAssetSummaryForBroker(
       return normalizeNhSecAssetSummary(snapshot);
     case "korsec":
       return normalizeKorSecAssetSummary(snapshot);
+    case "kiwoom":
+      return normalizeKiwoomAssetSummary(snapshot);
   }
 }
 
@@ -315,6 +332,23 @@ async function fetchNormalizedHoldingsForBroker(
       brokerId,
       brokerName: deepSnapshot.brokerName,
       capturedAt: deepSnapshot.capturedAt,
+      ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
+      holdings: filteredHoldings,
+    };
+  }
+
+  if (brokerId === "kiwoom") {
+    const broker = getKiwoomBroker();
+    const snapshot = await broker.fetchHoldings(toFetchOptions(options));
+    const holdings = normalizeKiwoomHoldings(snapshot);
+    const filteredHoldings = options.accountNumber
+      ? holdings.filter((item) => item.accountNumber === options.accountNumber)
+      : holdings;
+
+    return {
+      brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
       ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
       holdings: filteredHoldings,
     };
@@ -415,6 +449,21 @@ async function fetchNormalizedAccountsForBroker(
     };
   }
 
+  if (brokerId === "kiwoom") {
+    const broker = getKiwoomBroker();
+    const snapshot = await broker.fetchAccounts(toFetchOptions(options));
+    const accounts = normalizeKiwoomAccounts(snapshot);
+
+    return {
+      brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      pageTitle: "키움 OpenAPI 계좌요약",
+      pageUrl: "https://api.kiwoom.com/api/dostk/acnt",
+      accounts,
+    };
+  }
+
   const broker = getShinhanSecBroker();
   const snapshot = await broker.fetchAccountOverview(toFetchOptions(options));
   const accounts = normalizeShinhanAccounts(snapshot);
@@ -483,6 +532,34 @@ async function fetchNormalizedTransactionsForBroker(
 
   if (brokerId === "korsec") {
     throw new Error("한국투자증권은 현재 ID 로그인 기준 통합 거래내역 조회를 지원하지 않습니다.");
+  }
+
+  if (brokerId === "kiwoom") {
+    const broker = getKiwoomBroker();
+    const snapshot = await broker.fetchTransactions({
+      ...(options.startDate ? { startDate: options.startDate } : {}),
+      ...(options.endDate ? { endDate: options.endDate } : {}),
+      ...(options.forceRefresh !== undefined
+        ? { forceRefresh: options.forceRefresh }
+        : {}),
+    });
+    const transactions = normalizeKiwoomTransactions(snapshot);
+    const filteredTransactions = options.accountNumber
+      ? transactions.filter((item) => item.accountNumber === options.accountNumber)
+      : transactions;
+
+    return {
+      brokerId,
+      brokerName: snapshot.brokerName,
+      capturedAt: snapshot.capturedAt,
+      ...(options.accountNumber ? { requestedAccountNumber: options.accountNumber } : {}),
+      query: {
+        startDate: snapshot.query.startDate,
+        endDate: snapshot.query.endDate,
+      },
+      sourceTypes: ["broker_specific"],
+      transactions: filteredTransactions,
+    };
   }
 
   if (brokerId === "nhsec") {
@@ -688,7 +765,7 @@ server.registerTool(
   {
     title: "Get Asset Snapshot",
     description:
-      "증권사 자산 화면에서 범용 요약 데이터를 읽습니다. 삼성증권/신한투자증권/미래에셋증권/NH투자증권/한국투자증권을 지원합니다.",
+      "증권사 자산 화면 또는 API에서 범용 요약 데이터를 읽습니다. 삼성증권/신한투자증권/미래에셋증권/NH투자증권/한국투자증권/키움 OpenAPI를 지원합니다.",
     inputSchema: z.object({
       brokerId: brokerIdSchema,
       forceRefresh: z.boolean().optional().default(false),
@@ -3608,6 +3685,226 @@ server.registerTool(
           debug,
           forceRefresh,
           ...(headless !== undefined ? { headless } : {}),
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+
+server.registerTool(
+  "get_kiwoom_asset_summary",
+  {
+    title: "Get Kiwoom Asset Summary",
+    description: "키움 OpenAPI 기반 자산 요약을 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+    }),
+  },
+  async ({ debug, forceRefresh }) => {
+    try {
+      const broker = getKiwoomBroker();
+      return toToolResult(
+        await broker.fetchAssetSnapshot({
+          debug,
+          forceRefresh,
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_kiwoom_accounts",
+  {
+    title: "Get Kiwoom Accounts",
+    description: "키움 OpenAPI 계좌 요약을 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+    }),
+  },
+  async ({ debug, forceRefresh }) => {
+    try {
+      const broker = getKiwoomBroker();
+      const snapshot = await broker.fetchAccounts({
+        debug,
+        forceRefresh,
+      });
+      const accounts = normalizeKiwoomAccounts(snapshot);
+
+      return toToolResult({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        count: accounts.length,
+        accounts,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_kiwoom_holdings",
+  {
+    title: "Get Kiwoom Holdings",
+    description: "키움 OpenAPI 보유종목/평가현황을 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+    }),
+  },
+  async ({ debug, forceRefresh }) => {
+    try {
+      const broker = getKiwoomBroker();
+      const snapshot = await broker.fetchHoldings({
+        debug,
+        forceRefresh,
+      });
+      const holdings = normalizeKiwoomHoldings(snapshot);
+
+      return toToolResult({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        account: snapshot.account,
+        totals: snapshot.totals,
+        count: holdings.length,
+        byCategory: countBy(holdings.map((item) => item.category)),
+        holdings,
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_kiwoom_transactions",
+  {
+    title: "Get Kiwoom Transactions",
+    description: "키움 OpenAPI 거래내역을 구조화해서 반환합니다.",
+    inputSchema: z.object({
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+    }),
+  },
+  async ({ startDate, endDate, debug, forceRefresh }) => {
+    try {
+      const broker = getKiwoomBroker();
+      const snapshot = await broker.fetchTransactions({
+        ...(startDate ? { startDate } : {}),
+        ...(endDate ? { endDate } : {}),
+        forceRefresh,
+      });
+      const transactions = normalizeKiwoomTransactions(snapshot);
+
+      return toToolResult({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        account: snapshot.account,
+        query: snapshot.query,
+        count: transactions.length,
+        byKind: countBy(transactions.flatMap((item) => (item.kind ? [item.kind] : []))),
+        byDirection: countBy(
+          transactions.flatMap((item) => (item.direction ? [item.direction] : [])),
+        ),
+        transactions,
+        ...(snapshot.continuation ? { continuation: snapshot.continuation } : {}),
+      });
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_kiwoom_daily_balance_return",
+  {
+    title: "Get Kiwoom Daily Balance Return",
+    description: "키움 OpenAPI 일자별잔고수익률을 반환합니다.",
+    inputSchema: z.object({
+      date: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+    }),
+  },
+  async ({ date, forceRefresh }) => {
+    try {
+      const broker = getKiwoomBroker();
+      return toToolResult(
+        await broker.fetchDailyBalanceReturn({
+          ...(date ? { date } : {}),
+          forceRefresh,
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_kiwoom_period_performance",
+  {
+    title: "Get Kiwoom Period Performance",
+    description: "키움 OpenAPI 기간별 수익률/입출금 요약을 반환합니다.",
+    inputSchema: z.object({
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+    }),
+  },
+  async ({ startDate, endDate, forceRefresh }) => {
+    try {
+      const broker = getKiwoomBroker();
+      return toToolResult(
+        await broker.fetchPeriodPerformance({
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          forceRefresh,
+        }),
+      );
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+);
+
+server.registerTool(
+  "get_kiwoom_deep_snapshot",
+  {
+    title: "Get Kiwoom Deep Snapshot",
+    description: "키움 OpenAPI 자산/계좌/보유종목/거래내역/기간성과를 한 번에 수집합니다.",
+    inputSchema: z.object({
+      startDate: optionalDateSchema,
+      endDate: optionalDateSchema,
+      date: optionalDateSchema,
+      forceRefresh: z.boolean().optional().default(false),
+      debug: z.boolean().optional().default(false),
+    }),
+  },
+  async ({ startDate, endDate, date, debug, forceRefresh }) => {
+    try {
+      const broker = getKiwoomBroker();
+      return toToolResult(
+        await broker.fetchDeepSnapshot({
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          ...(date ? { date } : {}),
+          debug,
+          forceRefresh,
         }),
       );
     } catch (error) {
