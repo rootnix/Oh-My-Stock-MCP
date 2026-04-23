@@ -1962,8 +1962,20 @@ export type NormalizedAssetSummary = {
   totalAssetValue?: number;
   investmentAmountRaw?: string;
   investmentAmountValue?: number;
+  brokerReportedEvaluationAmountRaw?: string;
+  brokerReportedEvaluationAmountValue?: number;
   evaluationAmountRaw?: string;
   evaluationAmountValue?: number;
+  nonHoldingAssetAmountRaw?: string;
+  nonHoldingAssetAmountValue?: number;
+  cashBalanceRaw?: string;
+  cashBalanceValue?: number;
+  cashEquivalentBalanceRaw?: string;
+  cashEquivalentBalanceValue?: number;
+  foreignCashBalanceRaw?: string;
+  foreignCashBalanceValue?: number;
+  otherNonHoldingAssetRaw?: string;
+  otherNonHoldingAssetValue?: number;
   withdrawableAmountRaw?: string;
   withdrawableAmountValue?: number;
   profitLossRaw?: string;
@@ -1973,6 +1985,7 @@ export type NormalizedAssetSummary = {
   accountCount?: number;
   holdingCount?: number;
   assetCompositionCount?: number;
+  assetCompositionSource?: "holdings_aggregated" | "broker_reported";
 };
 
 export type NormalizedAccountBreakdown = {
@@ -2019,6 +2032,14 @@ export type NormalizedHolding = {
   purchasePriceValue?: number;
   currentPriceRaw?: string;
   currentPriceValue?: number;
+  nativePurchaseAmountRaw?: string;
+  nativePurchaseAmountValue?: number;
+  nativeEvaluationAmountRaw?: string;
+  nativeEvaluationAmountValue?: number;
+  nativeProfitLossRaw?: string;
+  nativeProfitLossValue?: number;
+  fxRateRaw?: string;
+  fxRateValue?: number;
   purchaseAmountRaw?: string;
   purchaseAmountValue?: number;
   evaluationAmountRaw?: string;
@@ -2030,6 +2051,18 @@ export type NormalizedHolding = {
   weightRaw?: string;
   weightValue?: number;
   raw?: Record<string, unknown>;
+};
+
+export type NormalizedAssetCompositionItem = {
+  category: NormalizedHoldingCategory;
+  purchaseAmountRaw?: string;
+  purchaseAmountValue?: number;
+  evaluationAmountRaw?: string;
+  evaluationAmountValue?: number;
+  profitLossRaw?: string;
+  profitLossValue?: number;
+  weightRaw?: string;
+  weightValue?: number;
 };
 
 export type NormalizedTransaction = {

@@ -312,6 +312,14 @@ Docker 실행 예시:
 - 보유내역: `category`, `productName`, `productCode`, `purchaseAmountValue`, `evaluationAmountValue`
 - 거래내역: `sourceType`, `kind`, `direction`, `assetCategory`
 
+normalized asset semantics는 `docs/normalized-asset-semantics.md`를 기준으로 고정합니다.
+
+- `evaluationAmountValue`: **중복 제거된 normalized holdings의 KRW 기준 평가금액 합계**
+- `assetComposition`: **holdings 집계 기반**으로 해석
+- `brokerReportedEvaluationAmountValue`: 브로커 원천 평가금액
+- `totalAssetValue = evaluationAmountValue + nonHoldingAssetAmountValue`
+- `cashBalanceValue`, `cashEquivalentBalanceValue`, `foreignCashBalanceValue`, `otherNonHoldingAssetValue`로 비보유종목 자산을 설명
+
 aggregate 툴은 브로커별 상태를 함께 반환합니다:
 
 - `successBrokerIds`

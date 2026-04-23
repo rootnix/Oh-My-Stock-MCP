@@ -13,6 +13,7 @@ import type {
   NhSecTransactionsSnapshot,
   NormalizedAccount,
   NormalizedAccountBreakdown,
+  NormalizedAssetCompositionItem,
   NormalizedAssetSummary,
   NormalizedHolding,
   NormalizedHoldingCategory,
@@ -50,6 +51,149 @@ function withParsedNumber<K extends string>(
   const parsed = parseLooseNumber(raw);
 
   return parsed !== undefined ? ({ [key]: parsed } as Record<K, number>) : {};
+}
+
+function toRawAmount(value?: number): string | undefined {
+  if (value === undefined || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return String(Math.round(value));
+}
+
+function sumNumbers(values: Array<number | undefined>): number | undefined {
+  const resolved = values.filter((value): value is number => value !== undefined);
+  if (resolved.length === 0) {
+    return undefined;
+  }
+
+  return resolved.reduce((sum, value) => sum + value, 0);
+}
+
+function getSectionValue(
+  sections: Array<{ values: Array<{ label: string; value: string }> }>,
+  label: string,
+): string | undefined {
+  for (const section of sections) {
+    const match = section.values.find((item) => item.label.includes(label));
+    if (match?.value) {
+      return match.value;
+    }
+  }
+
+  return undefined;
+}
+
+function getRecordStringValue(
+  record: Record<string, string>,
+  candidates: string[],
+): string | undefined {
+  for (const candidate of candidates) {
+    const direct = record[candidate];
+    if (direct?.trim()) {
+      return direct.trim();
+    }
+
+    const match = Object.entries(record).find(([key]) => key.includes(candidate));
+    if (match?.[1]?.trim()) {
+      return match[1].trim();
+    }
+  }
+
+  return undefined;
+}
+
+function buildNormalizedSummary(base: NormalizedAssetSummary): NormalizedAssetSummary {
+  const totalAssetValue = base.totalAssetValue;
+  const evaluationAmountValue = base.evaluationAmountValue;
+  const cashBalanceValue = base.cashBalanceValue ?? 0;
+  const cashEquivalentBalanceValue = base.cashEquivalentBalanceValue ?? 0;
+  const foreignCashBalanceValue = base.foreignCashBalanceValue ?? 0;
+  const explicitNonHoldingValue =
+    totalAssetValue !== undefined && evaluationAmountValue !== undefined
+      ? totalAssetValue - evaluationAmountValue
+      : undefined;
+  const nonHoldingAssetValue =
+    base.nonHoldingAssetAmountValue ?? explicitNonHoldingValue;
+  const explainedNonHoldingValue =
+    nonHoldingAssetValue !== undefined
+      ? nonHoldingAssetValue -
+          cashBalanceValue -
+          cashEquivalentBalanceValue -
+          foreignCashBalanceValue
+      : undefined;
+  const otherNonHoldingAssetValue =
+    base.otherNonHoldingAssetValue ??
+    (explainedNonHoldingValue !== undefined
+      ? Math.max(Math.round(explainedNonHoldingValue), 0)
+      : undefined);
+  const nonHoldingAssetRaw =
+    nonHoldingAssetValue !== undefined
+      ? base.nonHoldingAssetAmountRaw ?? toRawAmount(nonHoldingAssetValue)
+      : undefined;
+  const otherNonHoldingAssetRaw =
+    otherNonHoldingAssetValue !== undefined
+      ? base.otherNonHoldingAssetRaw ?? toRawAmount(otherNonHoldingAssetValue)
+      : undefined;
+
+  return {
+    ...base,
+    ...(base.brokerReportedEvaluationAmountRaw
+      ? {}
+      : base.evaluationAmountRaw
+        ? { brokerReportedEvaluationAmountRaw: base.evaluationAmountRaw }
+        : {}),
+    ...(base.brokerReportedEvaluationAmountValue !== undefined
+      ? {}
+      : base.evaluationAmountValue !== undefined
+        ? { brokerReportedEvaluationAmountValue: base.evaluationAmountValue }
+        : {}),
+    ...(nonHoldingAssetValue !== undefined
+      ? {
+          ...(nonHoldingAssetRaw ? { nonHoldingAssetAmountRaw: nonHoldingAssetRaw } : {}),
+          nonHoldingAssetAmountValue: nonHoldingAssetValue,
+        }
+      : {}),
+    ...(base.cashBalanceValue !== undefined || base.cashBalanceRaw
+      ? {
+          ...(base.cashBalanceRaw ? { cashBalanceRaw: base.cashBalanceRaw } : {}),
+          ...(base.cashBalanceValue !== undefined
+            ? { cashBalanceValue: base.cashBalanceValue }
+            : {}),
+        }
+      : {}),
+    ...(base.cashEquivalentBalanceValue !== undefined || base.cashEquivalentBalanceRaw
+      ? {
+          ...(base.cashEquivalentBalanceRaw
+            ? { cashEquivalentBalanceRaw: base.cashEquivalentBalanceRaw }
+            : {}),
+          ...(base.cashEquivalentBalanceValue !== undefined
+            ? { cashEquivalentBalanceValue: base.cashEquivalentBalanceValue }
+            : {}),
+        }
+      : {}),
+    ...(base.foreignCashBalanceValue !== undefined || base.foreignCashBalanceRaw
+      ? {
+          ...(base.foreignCashBalanceRaw
+            ? { foreignCashBalanceRaw: base.foreignCashBalanceRaw }
+            : {}),
+          ...(base.foreignCashBalanceValue !== undefined
+            ? { foreignCashBalanceValue: base.foreignCashBalanceValue }
+            : {}),
+        }
+      : {}),
+    ...(otherNonHoldingAssetValue !== undefined
+      ? {
+          ...(otherNonHoldingAssetRaw
+            ? { otherNonHoldingAssetRaw: otherNonHoldingAssetRaw }
+            : {}),
+          otherNonHoldingAssetValue,
+        }
+      : {}),
+    ...(base.assetCompositionSource
+      ? { assetCompositionSource: base.assetCompositionSource }
+      : {}),
+  };
 }
 
 function toBreakdown(
@@ -1034,8 +1178,37 @@ export function normalizeSamsungAssetSummary(
   snapshot: BrokerAssetSnapshot,
 ): NormalizedAssetSummary {
   const summary = snapshot.summary;
+  const brokerReportedEvaluationAmountValue = parseLooseNumber(
+    summary?.securitiesEvaluationAmount,
+  );
+  const brokerReportedEvaluationAmountRaw = summary?.securitiesEvaluationAmount;
+  const cashBalanceValue = sumNumbers(
+    (snapshot.assetComposition ?? [])
+      .filter((item) => /현금잔고|예수금/u.test(item.category))
+      .map((item) => parseLooseNumber(item.evaluationAmount)),
+  );
+  const cashEquivalentBalanceValue = sumNumbers(
+    (snapshot.assetComposition ?? [])
+      .filter((item) => /단기상품|CMA|RP/u.test(item.category))
+      .map((item) => parseLooseNumber(item.evaluationAmount)),
+  );
+  const foreignCashBalanceValue = sumNumbers(
+    (snapshot.assetComposition ?? [])
+      .filter((item) => /외화잔고/u.test(item.category))
+      .map((item) => parseLooseNumber(item.evaluationAmount)),
+  );
+  const cashBalanceRaw = toRawAmount(cashBalanceValue);
+  const cashEquivalentBalanceRaw = toRawAmount(cashEquivalentBalanceValue);
+  const foreignCashBalanceRaw = toRawAmount(foreignCashBalanceValue);
+  const normalizedEvaluationAmountValue =
+    brokerReportedEvaluationAmountValue !== undefined
+      ? brokerReportedEvaluationAmountValue - (cashEquivalentBalanceValue ?? 0)
+      : undefined;
+  const normalizedEvaluationAmountRaw = toRawAmount(
+    normalizedEvaluationAmountValue,
+  );
 
-  return {
+  return buildNormalizedSummary({
     brokerId: snapshot.brokerId,
     brokerName: snapshot.brokerName,
     capturedAt: snapshot.capturedAt,
@@ -1050,30 +1223,76 @@ export function normalizeSamsungAssetSummary(
       ? { investmentAmountRaw: summary.investmentAmount }
       : {}),
     ...withParsedNumber("investmentAmountValue", summary?.investmentAmount),
-    ...(summary?.securitiesEvaluationAmount
-      ? { evaluationAmountRaw: summary.securitiesEvaluationAmount }
+    ...(brokerReportedEvaluationAmountRaw
+      ? { brokerReportedEvaluationAmountRaw }
       : {}),
-    ...withParsedNumber(
-      "evaluationAmountValue",
-      summary?.securitiesEvaluationAmount,
-    ),
+    ...(brokerReportedEvaluationAmountValue !== undefined
+      ? { brokerReportedEvaluationAmountValue }
+      : {}),
+    ...(normalizedEvaluationAmountRaw
+      ? { evaluationAmountRaw: normalizedEvaluationAmountRaw }
+      : {}),
+    ...(normalizedEvaluationAmountValue !== undefined
+      ? { evaluationAmountValue: normalizedEvaluationAmountValue }
+      : {}),
     ...(summary?.profitLoss ? { profitLossRaw: summary.profitLoss } : {}),
     ...withParsedNumber("profitLossValue", summary?.profitLoss),
     ...(summary?.returnRate ? { returnRateRaw: summary.returnRate } : {}),
     ...withParsedNumber("returnRateValue", summary?.returnRate),
+    ...(cashBalanceValue !== undefined
+      ? {
+          ...(cashBalanceRaw ? { cashBalanceRaw } : {}),
+          cashBalanceValue,
+        }
+      : {}),
+    ...(cashEquivalentBalanceValue !== undefined
+      ? {
+          ...(cashEquivalentBalanceRaw ? { cashEquivalentBalanceRaw } : {}),
+          cashEquivalentBalanceValue,
+        }
+      : {}),
+    ...(foreignCashBalanceValue !== undefined
+      ? {
+          ...(foreignCashBalanceRaw ? { foreignCashBalanceRaw } : {}),
+          foreignCashBalanceValue,
+        }
+      : {}),
     ...(snapshot.assetComposition
       ? { assetCompositionCount: snapshot.assetComposition.length }
       : {}),
     ...(snapshot.holdings ? { holdingCount: snapshot.holdings.length } : {}),
-  };
+    assetCompositionSource: "holdings_aggregated",
+  });
 }
 
 export function normalizeShinhanAssetSummary(
   snapshot: BrokerAssetSnapshot,
 ): NormalizedAssetSummary {
   const summary = snapshot.shinhanAssetAnalysis;
+  const totalAssetValue = parseLooseNumber(summary?.totalAsset);
+  const cashBalanceValue = sumNumbers(
+    (summary?.investmentOverview ?? [])
+      .filter((item) => /예수금/u.test(item.category))
+      .map((item) => parseLooseNumber(item.amount)),
+  );
+  const investedCategories = (summary?.investmentOverview ?? []).filter(
+    (item) => !/예수금|기타/u.test(item.category),
+  );
+  const brokerReportedEvaluationAmountValue = sumNumbers(
+    investedCategories.map((item) => parseLooseNumber(item.amount)),
+  );
+  const evaluationAmountValue =
+    brokerReportedEvaluationAmountValue ??
+    (totalAssetValue !== undefined && cashBalanceValue !== undefined
+      ? totalAssetValue - cashBalanceValue
+      : undefined);
+  const brokerReportedEvaluationAmountRaw = toRawAmount(
+    brokerReportedEvaluationAmountValue,
+  );
+  const evaluationAmountRaw = toRawAmount(evaluationAmountValue);
+  const cashBalanceRaw = toRawAmount(cashBalanceValue);
 
-  return {
+  return buildNormalizedSummary({
     brokerId: snapshot.brokerId,
     brokerName: snapshot.brokerName,
     capturedAt: snapshot.capturedAt,
@@ -1087,8 +1306,29 @@ export function normalizeShinhanAssetSummary(
     ...(summary?.serviceGrade ? { serviceGrade: summary.serviceGrade } : {}),
     ...(summary?.totalAsset ? { totalAssetRaw: summary.totalAsset } : {}),
     ...withParsedNumber("totalAssetValue", summary?.totalAsset),
+    ...(brokerReportedEvaluationAmountValue !== undefined
+      ? {
+          ...(brokerReportedEvaluationAmountRaw
+            ? { brokerReportedEvaluationAmountRaw }
+            : {}),
+          brokerReportedEvaluationAmountValue,
+        }
+      : {}),
+    ...(evaluationAmountValue !== undefined
+      ? {
+          ...(evaluationAmountRaw ? { evaluationAmountRaw } : {}),
+          evaluationAmountValue,
+        }
+      : {}),
+    ...(cashBalanceValue !== undefined
+      ? {
+          ...(cashBalanceRaw ? { cashBalanceRaw } : {}),
+          cashBalanceValue,
+        }
+      : {}),
     ...(summary?.accounts ? { accountCount: summary.accounts.length } : {}),
-  };
+    assetCompositionSource: "holdings_aggregated",
+  });
 }
 
 export function normalizeSamsungAccounts(
@@ -1153,42 +1393,152 @@ export function normalizeShinhanAccounts(
 export function normalizeSamsungHoldings(
   snapshot: SamsungPopHoldingsSnapshot,
 ): NormalizedHolding[] {
-  return snapshot.holdings.map((holding) => ({
-    brokerId: snapshot.brokerId,
-    brokerName: snapshot.brokerName,
-    capturedAt: snapshot.capturedAt,
-    accountNumber: holding.accountNumber,
-    displayAccountNumber: holding.displayAccountNumber,
-    ...(holding.accountType ? { accountType: holding.accountType } : {}),
-    ...(holding.ownerName ? { ownerName: holding.ownerName } : {}),
-    category: normalizeHoldingCategory(holding.productCategory),
-    ...(holding.productName ? { productName: holding.productName } : {}),
-    ...(holding.productCode ? { productCode: holding.productCode } : {}),
-    ...(holding.market ? { market: holding.market } : {}),
-    ...(holding.currency ? { currency: holding.currency } : {}),
-    ...(holding.quantity ? { quantityRaw: holding.quantity } : {}),
-    ...withParsedNumber("quantityValue", holding.quantity),
-    ...(holding.purchaseUnitPrice
-      ? { purchasePriceRaw: holding.purchaseUnitPrice }
-      : {}),
-    ...withParsedNumber("purchasePriceValue", holding.purchaseUnitPrice),
-    ...(holding.currentPrice ? { currentPriceRaw: holding.currentPrice } : {}),
-    ...withParsedNumber("currentPriceValue", holding.currentPrice),
-    ...(holding.purchaseAmount ? { purchaseAmountRaw: holding.purchaseAmount } : {}),
-    ...withParsedNumber("purchaseAmountValue", holding.purchaseAmount),
-    ...(holding.evaluationAmount
-      ? { evaluationAmountRaw: holding.evaluationAmount }
-      : {}),
-    ...withParsedNumber("evaluationAmountValue", holding.evaluationAmount),
-    ...(holding.profitLoss ? { profitLossRaw: holding.profitLoss } : {}),
-    ...withParsedNumber("profitLossValue", holding.profitLoss),
-    ...(holding.returnRate ? { returnRateRaw: holding.returnRate } : {}),
-    ...withParsedNumber("returnRateValue", holding.returnRate),
-    raw: {
-      primaryValues: holding.primaryValues,
-      detailValues: holding.detailValues,
-    },
-  }));
+  const normalized: NormalizedHolding[] = [];
+
+  for (const accountSnapshot of snapshot.accounts) {
+    const foreignHoldings = accountSnapshot.holdings.filter(
+      (holding) => holding.productCategory === "foreign_stock",
+    );
+    const foreignEvaluationTotal = parseLooseNumber(
+      getSectionValue(accountSnapshot.holdingSummarySections, "평가금액") ??
+        getSectionValue(accountSnapshot.summarySections, "평가금액"),
+    );
+    const totalForeignNativeEvaluation = sumNumbers(
+      foreignHoldings.map((holding) => parseLooseNumber(holding.evaluationAmount)),
+    );
+    let foreignAllocatedEvaluation = 0;
+    let foreignHoldingIndex = 0;
+
+    for (const holding of accountSnapshot.holdings) {
+      const nativePurchaseAmountValue = parseLooseNumber(holding.purchaseAmount);
+      const nativeEvaluationAmountValue = parseLooseNumber(holding.evaluationAmount);
+      const nativeProfitLossValue = parseLooseNumber(holding.profitLoss);
+      const fxRateRaw = getRecordStringValue(holding.primaryValues, ["기준환율"]);
+      const fxRateValue = parseLooseNumber(fxRateRaw);
+      const krwProfitLossRaw = getRecordStringValue(holding.primaryValues, [
+        "원화평가손익",
+      ]);
+      const krwProfitLossValue = parseLooseNumber(krwProfitLossRaw);
+      const krwReturnRateRaw = getRecordStringValue(holding.detailValues, [
+        "원화수익률",
+      ]);
+      const isForeignHolding = holding.productCategory === "foreign_stock";
+      const isLastForeignHolding =
+        isForeignHolding && foreignHoldingIndex === foreignHoldings.length - 1;
+
+      let purchaseAmountValue = parseLooseNumber(holding.purchaseAmount);
+      let evaluationAmountValue = parseLooseNumber(holding.evaluationAmount);
+      let profitLossValue = parseLooseNumber(holding.profitLoss);
+      let purchaseAmountRaw = holding.purchaseAmount;
+      let evaluationAmountRaw = holding.evaluationAmount;
+      let profitLossRaw = holding.profitLoss;
+      let returnRateRaw = holding.returnRate;
+
+      if (
+        isForeignHolding &&
+        foreignEvaluationTotal !== undefined &&
+        totalForeignNativeEvaluation !== undefined &&
+        nativeEvaluationAmountValue !== undefined
+      ) {
+        if (isLastForeignHolding) {
+          evaluationAmountValue =
+            foreignEvaluationTotal - foreignAllocatedEvaluation;
+        } else {
+          evaluationAmountValue = Math.round(
+            (foreignEvaluationTotal * nativeEvaluationAmountValue) /
+              totalForeignNativeEvaluation,
+          );
+          foreignAllocatedEvaluation += evaluationAmountValue;
+        }
+
+        profitLossValue =
+          krwProfitLossValue ??
+          (nativeProfitLossValue !== undefined && fxRateValue !== undefined
+            ? Math.round(nativeProfitLossValue * fxRateValue)
+            : undefined);
+        purchaseAmountValue =
+          evaluationAmountValue !== undefined && profitLossValue !== undefined
+            ? evaluationAmountValue - profitLossValue
+            : nativePurchaseAmountValue !== undefined && fxRateValue !== undefined
+              ? Math.round(nativePurchaseAmountValue * fxRateValue)
+              : undefined;
+        purchaseAmountRaw = toRawAmount(purchaseAmountValue);
+        evaluationAmountRaw = toRawAmount(evaluationAmountValue);
+        profitLossRaw = toRawAmount(profitLossValue);
+        returnRateRaw =
+          krwReturnRateRaw ??
+          (purchaseAmountValue && profitLossValue !== undefined
+            ? String((profitLossValue / purchaseAmountValue) * 100)
+            : holding.returnRate);
+        foreignHoldingIndex += 1;
+      }
+
+      normalized.push({
+        brokerId: snapshot.brokerId,
+        brokerName: snapshot.brokerName,
+        capturedAt: snapshot.capturedAt,
+        accountNumber: accountSnapshot.account.accountNumber,
+        displayAccountNumber: accountSnapshot.account.displayAccountNumber,
+        ...(accountSnapshot.account.accountType
+          ? { accountType: accountSnapshot.account.accountType }
+          : {}),
+        ...(accountSnapshot.account.ownerName
+          ? { ownerName: accountSnapshot.account.ownerName }
+          : {}),
+        category: normalizeHoldingCategory(holding.productCategory),
+        ...(holding.productName ? { productName: holding.productName } : {}),
+        ...(holding.productCode ? { productCode: holding.productCode } : {}),
+        ...(holding.market ? { market: holding.market } : {}),
+        ...(holding.currency ? { currency: holding.currency } : {}),
+        ...(holding.quantity ? { quantityRaw: holding.quantity } : {}),
+        ...withParsedNumber("quantityValue", holding.quantity),
+        ...(holding.purchaseUnitPrice
+          ? { purchasePriceRaw: holding.purchaseUnitPrice }
+          : {}),
+        ...withParsedNumber("purchasePriceValue", holding.purchaseUnitPrice),
+        ...(holding.currentPrice ? { currentPriceRaw: holding.currentPrice } : {}),
+        ...withParsedNumber("currentPriceValue", holding.currentPrice),
+        ...(nativePurchaseAmountValue !== undefined
+          ? {
+              nativePurchaseAmountRaw: holding.purchaseAmount,
+              nativePurchaseAmountValue,
+            }
+          : {}),
+        ...(nativeEvaluationAmountValue !== undefined
+          ? {
+              nativeEvaluationAmountRaw: holding.evaluationAmount,
+              nativeEvaluationAmountValue,
+            }
+          : {}),
+        ...(nativeProfitLossValue !== undefined
+          ? {
+              nativeProfitLossRaw: holding.profitLoss,
+              nativeProfitLossValue,
+            }
+          : {}),
+        ...(fxRateRaw ? { fxRateRaw } : {}),
+        ...(fxRateValue !== undefined ? { fxRateValue } : {}),
+        ...(purchaseAmountRaw ? { purchaseAmountRaw } : {}),
+        ...(purchaseAmountValue !== undefined
+          ? { purchaseAmountValue }
+          : {}),
+        ...(evaluationAmountRaw ? { evaluationAmountRaw } : {}),
+        ...(evaluationAmountValue !== undefined
+          ? { evaluationAmountValue }
+          : {}),
+        ...(profitLossRaw ? { profitLossRaw } : {}),
+        ...(profitLossValue !== undefined ? { profitLossValue } : {}),
+        ...(returnRateRaw ? { returnRateRaw } : {}),
+        ...withParsedNumber("returnRateValue", returnRateRaw),
+        raw: {
+          primaryValues: holding.primaryValues,
+          detailValues: holding.detailValues,
+        },
+      });
+    }
+  }
+
+  return normalized;
 }
 
 export function normalizeShinhanHoldings(
@@ -1199,7 +1549,7 @@ export function normalizeShinhanHoldings(
     holdings: Array<Record<string, unknown>>;
   },
 ): NormalizedHolding[] {
-  return snapshot.holdings.map((holding) => {
+  const holdings = snapshot.holdings.map((holding) => {
     const category = normalizeHoldingCategory(getString(holding, "category"));
     const accountType = getString(holding, "accountType");
     const market = getString(holding, "market");
@@ -1264,6 +1614,121 @@ export function normalizeShinhanHoldings(
       ...withParsedNumber("weightValue", weightRaw),
       ...(raw ? { raw } : {}),
     };
+  });
+
+  return dedupeShinhanHoldings(
+    holdings.filter((holding) => holding.accountNumber.length > 0),
+  );
+}
+
+export function buildNormalizedAssetComposition(
+  holdings: NormalizedHolding[],
+): NormalizedAssetCompositionItem[] {
+  const totals = new Map<NormalizedHoldingCategory, {
+    category: NormalizedHoldingCategory;
+    purchaseAmountValue: number;
+    evaluationAmountValue: number;
+    profitLossValue: number;
+  }>();
+
+  for (const holding of holdings) {
+    const existing = totals.get(holding.category) ?? {
+      category: holding.category,
+      purchaseAmountValue: 0,
+      evaluationAmountValue: 0,
+      profitLossValue: 0,
+    };
+
+    existing.purchaseAmountValue += holding.purchaseAmountValue ?? 0;
+    existing.evaluationAmountValue += holding.evaluationAmountValue ?? 0;
+    existing.profitLossValue += holding.profitLossValue ?? 0;
+    totals.set(holding.category, existing);
+  }
+
+  const totalEvaluationAmount = sumNumbers(
+    Array.from(totals.values()).map((item) => item.evaluationAmountValue),
+  ) ?? 0;
+
+  return Array.from(totals.values())
+    .map((item) => {
+      const weightValue =
+        totalEvaluationAmount > 0
+          ? (item.evaluationAmountValue / totalEvaluationAmount) * 100
+          : 0;
+      const purchaseAmountRaw = toRawAmount(item.purchaseAmountValue);
+      const evaluationAmountRaw = toRawAmount(item.evaluationAmountValue);
+      const profitLossRaw = toRawAmount(item.profitLossValue);
+
+      return {
+        category: item.category,
+        ...(purchaseAmountRaw ? { purchaseAmountRaw } : {}),
+        purchaseAmountValue: item.purchaseAmountValue,
+        ...(evaluationAmountRaw ? { evaluationAmountRaw } : {}),
+        evaluationAmountValue: item.evaluationAmountValue,
+        ...(profitLossRaw ? { profitLossRaw } : {}),
+        profitLossValue: item.profitLossValue,
+        weightRaw: String(weightValue),
+        weightValue,
+      };
+    })
+    .sort((left, right) => (right.evaluationAmountValue ?? 0) - (left.evaluationAmountValue ?? 0));
+}
+
+function normalizeHoldingIdentity(value?: string): string {
+  return (value ?? "").replace(/\s+/gu, "").toUpperCase();
+}
+
+function isGenericRetirementHolding(holding: NormalizedHolding): boolean {
+  return (
+    holding.category === "retirement" &&
+    (!holding.productCode || holding.productCode === "A0") &&
+    /연금저축|퇴직연금/u.test(holding.productName ?? "")
+  );
+}
+
+function dedupeShinhanHoldings(holdings: NormalizedHolding[]): NormalizedHolding[] {
+  const specificKeys = new Set(
+    holdings
+      .filter((holding) => holding.category !== "financial_product")
+      .map((holding) =>
+        [
+          holding.accountNumber,
+          normalizeHoldingIdentity(holding.productCode ?? holding.productName),
+          holding.evaluationAmountValue ?? "",
+          holding.quantityValue ?? "",
+        ].join("|"),
+      ),
+  );
+  const retirementAggregateKeys = new Set(
+    holdings
+      .filter((holding) => !isGenericRetirementHolding(holding))
+      .map((holding) =>
+        [holding.accountNumber, holding.evaluationAmountValue ?? ""].join("|"),
+      ),
+  );
+
+  return holdings.filter((holding) => {
+    const specificKey = [
+      holding.accountNumber,
+      normalizeHoldingIdentity(holding.productCode ?? holding.productName),
+      holding.evaluationAmountValue ?? "",
+      holding.quantityValue ?? "",
+    ].join("|");
+
+    if (holding.category === "financial_product" && specificKeys.has(specificKey)) {
+      return false;
+    }
+
+    if (
+      isGenericRetirementHolding(holding) &&
+      retirementAggregateKeys.has(
+        [holding.accountNumber, holding.evaluationAmountValue ?? ""].join("|"),
+      )
+    ) {
+      return false;
+    }
+
+    return true;
   });
 }
 

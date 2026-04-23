@@ -17,6 +17,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "test": "npm run build && node --test tests/**/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "auth:samsungpop": "tsx src/scripts/auth-samsungpop.ts",
     "auth:shinhansec": "tsx src/scripts/auth-shinhansec.ts",
