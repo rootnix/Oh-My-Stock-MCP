@@ -509,6 +509,8 @@ export class KorSecBroker implements BrokerAdapter {
   readonly name = "Korea Investment & Securities";
 
   private readonly storage: StorageStateStore;
+  private apiRequestQueue: Promise<void> = Promise.resolve();
+  private lastApiRequestAt = 0;
 
   constructor(private readonly config: AppConfig) {
     this.storage = new StorageStateStore(config.korsec.storageStatePath);
@@ -1713,6 +1715,30 @@ export class KorSecBroker implements BrokerAdapter {
     );
   }
 
+  private async runSerializedApiCall<T>(task: () => Promise<T>): Promise<T> {
+    const previous = this.apiRequestQueue;
+    let releaseQueue: () => void = () => undefined;
+    this.apiRequestQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+
+    await previous;
+
+    const elapsed = Date.now() - this.lastApiRequestAt;
+    const waitMs = Math.max(0, 350 - elapsed);
+
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+
+    try {
+      return await task();
+    } finally {
+      this.lastApiRequestAt = Date.now();
+      releaseQueue();
+    }
+  }
+
   private async issueApiAccessToken(forceRefresh = false): Promise<KorSecApiTokenCache> {
     if (!this.hasApiCredentialSet) {
       throw new UserVisibleError(
@@ -1851,7 +1877,6 @@ export class KorSecBroker implements BrokerAdapter {
       forceRefreshToken?: boolean;
     } = {},
   ): Promise<{ payload: T; trCont: string }> {
-    const token = await this.issueApiAccessToken(options.forceRefreshToken ?? false);
     const appKey = this.config.korsec.appKey;
     const secretKey = this.config.korsec.secretKey;
 
@@ -1860,58 +1885,82 @@ export class KorSecBroker implements BrokerAdapter {
         "한국투자증권 OpenAPI 요청에 필요한 KORSEC_APP_KEY/KORSEC_SECRET_KEY 가 없습니다.",
       );
     }
-    const url = new URL(apiPath, OPEN_API_BASE_URL);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const token = await this.issueApiAccessToken(options.forceRefreshToken ?? false);
+      const url = new URL(apiPath, OPEN_API_BASE_URL);
 
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value);
-    }
+      for (const [key, value] of Object.entries(params)) {
+        url.searchParams.set(key, value);
+      }
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json;charset=UTF-8",
-        "User-Agent": HTTP_USER_AGENT,
-        authorization: `Bearer ${token.accessToken}`,
-        appkey: appKey,
-        appsecret: secretKey,
-        tr_id: trId,
-        tr_cont: options.trCont ?? "",
-        custtype: "P",
-      },
-    });
-    const rawText = await response.text();
-    let payload: T;
+      const result = await this.runSerializedApiCall(async () => {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json;charset=UTF-8",
+            "User-Agent": HTTP_USER_AGENT,
+            authorization: `Bearer ${token.accessToken}`,
+            appkey: appKey,
+            appsecret: secretKey,
+            tr_id: trId,
+            tr_cont: options.trCont ?? "",
+            custtype: "P",
+          },
+        });
+        const rawText = await response.text();
+        let payload: T;
 
-    try {
-      payload = (rawText ? JSON.parse(rawText) : {}) as T;
-    } catch {
-      throw new UserVisibleError(
-        `한국투자증권 OpenAPI 응답을 해석하지 못했습니다 (${apiPath}).`,
-      );
-    }
+        try {
+          payload = (rawText ? JSON.parse(rawText) : {}) as T;
+        } catch {
+          throw new UserVisibleError(
+            `한국투자증권 OpenAPI 응답을 해석하지 못했습니다 (${apiPath}).`,
+          );
+        }
 
-    if (!response.ok) {
-      throw new UserVisibleError(
-        [
-          `한국투자증권 OpenAPI 요청이 실패했습니다 (${apiPath}).`,
-          payload.msg1,
+        return {
+          response,
+          payload,
           rawText,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      );
-    }
+        };
+      });
 
-    if (payload.rt_cd && payload.rt_cd !== "0") {
+      const isRateLimited =
+        result.payload.msg_cd === "EGW00201" ||
+        result.payload.msg1?.includes("초당 거래건수를 초과") === true;
+
+      if ((result.response.ok && (!result.payload.rt_cd || result.payload.rt_cd === "0"))) {
+        return {
+          payload: result.payload,
+          trCont: result.response.headers.get("tr_cont") ?? "",
+        };
+      }
+
+      if (isRateLimited && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+        continue;
+      }
+
+      if (!result.response.ok) {
+        throw new UserVisibleError(
+          [
+            `한국투자증권 OpenAPI 요청이 실패했습니다 (${apiPath}).`,
+            result.payload.msg1,
+            result.rawText,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
+
       throw new UserVisibleError(
-        `한국투자증권 OpenAPI 요청이 실패했습니다 (${trId}): ${payload.msg1 ?? payload.msg_cd ?? "알 수 없는 오류"}`,
+        `한국투자증권 OpenAPI 요청이 실패했습니다 (${trId}): ${result.payload.msg1 ?? result.payload.msg_cd ?? "알 수 없는 오류"}`,
       );
     }
 
-    return {
-      payload,
-      trCont: response.headers.get("tr_cont") ?? "",
-    };
+    throw new UserVisibleError(
+      `한국투자증권 OpenAPI 요청이 반복적으로 실패했습니다 (${trId}).`,
+    );
   }
 
   private async fetchApiAccountBalanceRaw(

@@ -213,6 +213,7 @@ npm run auth:korsec
 > 브라우저(ID 로그인) 모드에서는 `자산현황(요약)`, `자산현황(종합잔고평가)`, `주식/펀드/CMA/랩/채권/RP/IMA` 탭별 잔고 요약까지 지원합니다.
 > OpenAPI 모드에서는 계좌/국내·해외 잔고/거래내역/기간 손익/해외잔고까지 지원하며, `get_all_transactions` 통합 조회에도 포함됩니다.
 > OpenAPI는 공식 KIS Developers App Key/App Secret과 계좌번호(8자리)+상품코드(2자리)가 있으면 가장 안정적으로 동작합니다.
+> 한국투자증권 API 키 발급/이용 안내: https://apiportal.koreainvestment.com/intro
 
 
 ### 키움증권 OpenAPI
@@ -231,6 +232,7 @@ npm run auth:kiwoom
 
 > 키움증권은 브라우저 세션이 아니라 REST OpenAPI 방식으로 동작합니다.
 > 현재 `계좌번호`, `예수금/출금가능금액`, `보유종목 평가`, `거래내역`, `일자별잔고수익률`, `기간별 수익률`을 지원합니다.
+> 키움증권 API 키 발급/이용 안내: https://openapi.kiwoom.com/main/home
 
 ## Docker 실행
 
