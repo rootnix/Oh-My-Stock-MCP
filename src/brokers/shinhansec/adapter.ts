@@ -1,7 +1,11 @@
-import type { Page } from "playwright";
+import { devices, type Locator, type Page } from "playwright";
 
 import type { AppConfig } from "../../config.js";
-import { createBrowserSession, type BrowserSession } from "../../lib/browser.js";
+import {
+  createBrowserSession,
+  type BrowserSession,
+  type CreateBrowserSessionOptions,
+} from "../../lib/browser.js";
 import { UserVisibleError } from "../../lib/errors.js";
 import {
   extractPageSnapshot,
@@ -53,30 +57,48 @@ import type {
   ManualSessionSetupResult,
 } from "../base.js";
 
-const LOGIN_URL =
-  "https://shinhansec.com/siw/etc/login/view.do?returnUrl=/siw/myasset/status/570101/view.do";
-const ASSET_ANALYSIS_URL =
-  "https://shinhansec.com/siw/myasset/status/570101/view.do";
-const FUND_PERFORMANCE_URL =
-  "https://shinhansec.com/siw/myasset/status/570102/view.do";
-const ALL_ACCOUNTS_URL =
-  "https://shinhansec.com/siw/myasset/status/570104/view.do";
-const TOTAL_ASSET_URL =
-  "https://shinhansec.com/siw/myasset/balance/540401/view.do";
-const STOCK_BALANCE_URL =
-  "https://shinhansec.com/siw/myasset/balance/540101/view.do";
-const FINANCIAL_PRODUCTS_URL =
-  "https://shinhansec.com/siw/myasset/balance/580001/view.do";
-const FOREIGN_ASSET_URL =
-  "https://shinhansec.com/siw/myasset/balance/foreign_asset/view.do";
-const CMA_BALANCE_URL =
-  "https://shinhansec.com/siw/myasset/balance/540801/view.do";
-const TRANSACTION_URL =
-  "https://shinhansec.com/siw/myasset/details/551201/view.do";
-const ALL_TRANSACTIONS_URL =
-  "https://shinhansec.com/siw/myasset/details/551001/view.do";
-const STOCK_TRANSACTION_DETAIL_URL =
-  "https://shinhansec.com/siw/myasset/details/550501/view.do";
+const SHINHAN_ORIGIN = "https://www.shinhansec.com";
+const SHINHAN_TABLET_DEVICE = devices["iPad Pro 11"];
+
+if (!SHINHAN_TABLET_DEVICE) {
+  throw new Error("Playwright device preset 'iPad Pro 11' is unavailable.");
+}
+
+const SHINHAN_TABLET_CONTEXT_OPTIONS = {
+  userAgent: SHINHAN_TABLET_DEVICE.userAgent,
+  viewport: SHINHAN_TABLET_DEVICE.viewport,
+  hasTouch: SHINHAN_TABLET_DEVICE.hasTouch,
+  isMobile: SHINHAN_TABLET_DEVICE.isMobile,
+  deviceScaleFactor: SHINHAN_TABLET_DEVICE.deviceScaleFactor,
+} satisfies Pick<
+  CreateBrowserSessionOptions,
+  "userAgent" | "viewport" | "hasTouch" | "isMobile" | "deviceScaleFactor"
+>;
+
+function createShinhanBrowserOptions(
+  options: Pick<CreateBrowserSessionOptions, "headless"> = {},
+  storageStatePath?: string,
+): CreateBrowserSessionOptions {
+  return {
+    ...SHINHAN_TABLET_CONTEXT_OPTIONS,
+    ...(options.headless !== undefined ? { headless: options.headless } : {}),
+    ...(storageStatePath ? { storageStatePath } : {}),
+  };
+}
+
+const ASSET_ANALYSIS_PATH = "/siw/myasset/status/570101/view.do";
+const LOGIN_URL = `${SHINHAN_ORIGIN}/siw/etc/login/view.do?returnUrl=${ASSET_ANALYSIS_PATH}`;
+const ASSET_ANALYSIS_URL = `${SHINHAN_ORIGIN}${ASSET_ANALYSIS_PATH}`;
+const FUND_PERFORMANCE_URL = `${SHINHAN_ORIGIN}/siw/myasset/status/570102/view.do`;
+const ALL_ACCOUNTS_URL = `${SHINHAN_ORIGIN}/siw/myasset/status/570104/view.do`;
+const TOTAL_ASSET_URL = `${SHINHAN_ORIGIN}/siw/myasset/balance/540401/view.do`;
+const STOCK_BALANCE_URL = `${SHINHAN_ORIGIN}/siw/myasset/balance/540101/view.do`;
+const FINANCIAL_PRODUCTS_URL = `${SHINHAN_ORIGIN}/siw/myasset/balance/580001/view.do`;
+const FOREIGN_ASSET_URL = `${SHINHAN_ORIGIN}/siw/myasset/balance/foreign_asset/view.do`;
+const CMA_BALANCE_URL = `${SHINHAN_ORIGIN}/siw/myasset/balance/540801/view.do`;
+const TRANSACTION_URL = `${SHINHAN_ORIGIN}/siw/myasset/details/551201/view.do`;
+const ALL_TRANSACTIONS_URL = `${SHINHAN_ORIGIN}/siw/myasset/details/551001/view.do`;
+const STOCK_TRANSACTION_DETAIL_URL = `${SHINHAN_ORIGIN}/siw/myasset/details/550501/view.do`;
 
 const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
   ShinhanSecFinancialProductTransactionCategory,
@@ -92,7 +114,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
   }
 > = {
   fund: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580801/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580801/view.do`,
     dataPath: "/siw/myasset/details/580801/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -103,7 +125,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list",
   },
   els_dls: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580802/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580802/view.do`,
     dataPath: "/siw/myasset/details/580802/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -113,7 +135,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list",
   },
   rp: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580803/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580803/view.do`,
     dataPath: "/siw/myasset/details/580803P01/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       serviceType: "search11",
@@ -124,7 +146,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list01",
   },
   deposit: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580804/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580804/view.do`,
     dataPath: "/siw/myasset/details/580804/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -136,7 +158,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list",
   },
   bond: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580805/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580805/view.do`,
     dataPath: "/siw/myasset/details/580805/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -146,7 +168,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list",
   },
   trust: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580806/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580806/view.do`,
     dataPath: "/siw/myasset/details/580806/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -157,7 +179,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list01",
   },
   issued_note: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580810/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580810/view.do`,
     dataPath: "/siw/myasset/details/580810/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -167,7 +189,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list",
   },
   wrap: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580808/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580808/view.do`,
     dataPath: "/siw/myasset/details/580808-1/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -178,7 +200,7 @@ const FINANCIAL_PRODUCT_TRANSACTION_CONFIG: Record<
     listKey: "list",
   },
   plan_yes_overseas: {
-    viewUrl: "https://shinhansec.com/siw/myasset/details/580809/view.do",
+    viewUrl: `${SHINHAN_ORIGIN}/siw/myasset/details/580809/view.do`,
     dataPath: "/siw/myasset/details/580809/data.do",
     buildBody: ({ accountNumber, startDate, endDate }) => ({
       acctNo: accountNumber,
@@ -198,6 +220,16 @@ function normalizeText(value: string | null | undefined): string {
 function textIncludesAny(text: string, candidates: string[]): boolean {
   return candidates.some((candidate) => text.includes(candidate));
 }
+
+const SECURITY_BLOCK_KEYWORDS = [
+  "비정상적인 접근",
+  "보안프로그램",
+  "통합설치프로그램",
+];
+
+type ShinhanSessionRefreshResult =
+  | { ok: true }
+  | { ok: false; error: unknown };
 
 function digitsOnly(value: string | undefined): string {
   return (value ?? "").replace(/\D+/g, "");
@@ -365,7 +397,9 @@ export class ShinhanSecBroker implements BrokerAdapter {
   readonly name = "Shinhan Securities";
 
   private readonly storage: StorageStateStore;
-  private sessionRefreshPromise: Promise<void> | undefined;
+  private sessionRefreshPromise:
+    | Promise<ShinhanSessionRefreshResult>
+    | undefined;
 
   constructor(private readonly config: AppConfig) {
     this.storage = new StorageStateStore(config.shinhansec.storageStatePath);
@@ -406,7 +440,8 @@ export class ShinhanSecBroker implements BrokerAdapter {
       missingRequirements,
       notes: [
         "확인된 로그인 페이지는 /siw/etc/login/view.do 이며 ID 로그인 입력 필드는 userID / userPW 입니다.",
-        "ID 로그인 비밀번호 입력은 가상키보드(Transkey)를 사용하므로 자동 로그인 시 키보드 클릭 방식으로 처리합니다.",
+        "신한 로그인 세션은 www.shinhansec.com 원점과 태블릿/터치 브라우저 컨텍스트를 사용합니다.",
+        "ID 로그인 비밀번호 입력은 가상키보드(Transkey)를 사용하므로 자동 로그인 시 터치 입력을 우선 사용합니다.",
         `핵심 자산 페이지 후보: ${ASSET_ANALYSIS_URL}, ${ALL_ACCOUNTS_URL}, ${TOTAL_ASSET_URL}, ${TRANSACTION_URL}`,
         this.config.shinhansec.accountPassword
           ? "계좌 비밀번호가 설정되어 있어 신한의 비밀번호 보호 페이지도 확장 가능합니다."
@@ -416,9 +451,10 @@ export class ShinhanSecBroker implements BrokerAdapter {
   }
 
   async setupManualSession(): Promise<ManualSessionSetupResult> {
-    const browserSession = await createBrowserSession(this.config, {
-      headless: false,
-    });
+    const browserSession = await createBrowserSession(
+      this.config,
+      createShinhanBrowserOptions({ headless: false }),
+    );
 
     try {
       const page = await browserSession.context.newPage();
@@ -2759,10 +2795,10 @@ export class ShinhanSecBroker implements BrokerAdapter {
     const tryWithSession = async (
       storageStatePath?: string,
     ): Promise<{ ok: true; value: T } | { ok: false }> => {
-      const browserSession = await createBrowserSession(this.config, {
-        ...(options.headless !== undefined ? { headless: options.headless } : {}),
-        ...(storageStatePath ? { storageStatePath } : {}),
-      });
+      const browserSession = await createBrowserSession(
+        this.config,
+        createShinhanBrowserOptions(options, storageStatePath),
+      );
 
       try {
         const page = await browserSession.context.newPage();
@@ -2778,6 +2814,68 @@ export class ShinhanSecBroker implements BrokerAdapter {
       }
     };
 
+    const tryWithFreshCredentialLogin = (): Promise<
+      { ok: true; value: T } | { ok: false }
+    > => {
+      if (this.sessionRefreshPromise) {
+        const sessionRefreshPromise = this.sessionRefreshPromise;
+
+        return (async () => {
+          const refreshResult = await sessionRefreshPromise;
+
+          if (!refreshResult.ok) {
+            throw refreshResult.error;
+          }
+
+          const result = await tryWithSession(this.storage.filePath);
+
+          if (result.ok) {
+            return result;
+          }
+
+          return { ok: false };
+        })();
+      }
+
+      const refreshPromise = (async (): Promise<
+        { ok: true; value: T } | { ok: false }
+      > => {
+        const browserSession = await createBrowserSession(
+          this.config,
+          createShinhanBrowserOptions(options),
+        );
+
+        try {
+          const page = await browserSession.context.newPage();
+          await this.loginWithCredentials(page);
+          await this.storage.save(browserSession.context);
+
+          const authenticated = await this.tryOpenProtectedPath(page, targetUrl);
+
+          if (!authenticated) {
+            return { ok: false };
+          }
+
+          return { ok: true, value: await handler(page, browserSession) };
+        } finally {
+          await browserSession.close();
+        }
+      })();
+
+      const refreshSignal: Promise<ShinhanSessionRefreshResult> =
+        refreshPromise.then(
+          () => ({ ok: true }) as const,
+          (error: unknown) => ({ ok: false, error }) as const,
+        );
+      this.sessionRefreshPromise = refreshSignal;
+
+      return refreshPromise.finally(() => {
+        if (this.sessionRefreshPromise === refreshSignal) {
+          this.sessionRefreshPromise = undefined;
+        }
+      });
+    };
+
     const hasSavedSession = await this.storage.exists();
 
     if (!options.forceRefresh && hasSavedSession) {
@@ -2789,6 +2887,12 @@ export class ShinhanSecBroker implements BrokerAdapter {
     }
 
     if (!this.hasCredentialSet()) {
+      if (hasSavedSession && options.forceRefresh) {
+        throw new UserVisibleError(
+          "신한투자증권 forceRefresh가 요청되었지만 자동 로그인 정보가 없습니다. 저장된 세션을 사용하려면 forceRefresh를 끄고, 새 세션을 만들려면 SHINHANSEC_USER_ID, SHINHANSEC_USER_PASSWORD 를 설정해 주세요.",
+        );
+      }
+
       if (hasSavedSession) {
         throw new UserVisibleError(
           "저장된 신한투자증권 세션이 만료되었거나 유효하지 않습니다. `npm run auth:shinhansec` 으로 세션을 다시 저장해 주세요.",
@@ -2800,48 +2904,15 @@ export class ShinhanSecBroker implements BrokerAdapter {
       );
     }
 
-    await this.refreshStoredSession(options);
-    const refreshed = await tryWithSession(this.storage.filePath);
+    const freshLogin = await tryWithFreshCredentialLogin();
 
-    if (refreshed.ok) {
-      return refreshed.value;
+    if (freshLogin.ok) {
+      return freshLogin.value;
     }
 
     throw new UserVisibleError(
       "신한투자증권 페이지 인증에 실패했습니다. 세션 설정 또는 계정 정보를 다시 확인해 주세요.",
     );
-  }
-
-  private async refreshStoredSession(
-    options: FetchBrokerAssetsOptions,
-  ): Promise<void> {
-    if (this.sessionRefreshPromise) {
-      return this.sessionRefreshPromise;
-    }
-
-    const refreshPromise = (async (): Promise<void> => {
-      const browserSession = await createBrowserSession(this.config, {
-        ...(options.headless !== undefined ? { headless: options.headless } : {}),
-      });
-
-      try {
-        const page = await browserSession.context.newPage();
-        await this.loginWithCredentials(page);
-        await this.storage.save(page.context());
-      } finally {
-        await browserSession.close();
-      }
-    })();
-
-    this.sessionRefreshPromise = refreshPromise;
-
-    try {
-      await refreshPromise;
-    } finally {
-      if (this.sessionRefreshPromise === refreshPromise) {
-        this.sessionRefreshPromise = undefined;
-      }
-    }
   }
 
   private hasCredentialSet(): boolean {
@@ -2861,18 +2932,16 @@ export class ShinhanSecBroker implements BrokerAdapter {
     }
 
     await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
-    await page.locator("#userID").waitFor({
-      state: "visible",
-      timeout: this.config.shinhansec.loginTimeoutMs,
-    });
+    await this.waitForCredentialLoginForm(page);
 
     await page.fill("#userID", userId);
     await this.enterPasswordWithTranskey(page, password);
-    await page.getByRole("button", { name: "로그인" }).click();
+    await this.tapOrClick(page.getByRole("button", { name: "로그인" }));
     await page.waitForLoadState("networkidle", {
       timeout: 10_000,
     }).catch(() => undefined);
     await page.waitForTimeout(2_000);
+    await this.throwIfSecurityBlocked(page);
 
     if (await this.isLoginPage(page)) {
       const bodyText = await page.locator("body").innerText().catch(() => "");
@@ -2888,7 +2957,7 @@ export class ShinhanSecBroker implements BrokerAdapter {
     page: Page,
     password: string,
   ): Promise<void> {
-    await page.locator("#userPW").click();
+    await this.tapOrClick(page.locator("#userPW"));
     await page.waitForTimeout(300);
 
     let keyboardMode: "lower" | "upper" | "special" = "lower";
@@ -2908,21 +2977,29 @@ export class ShinhanSecBroker implements BrokerAdapter {
       if (keyboardMode !== targetMode) {
         if (targetMode === "special") {
           if (keyboardMode === "upper") {
-            await page.locator("#mtk_cp").click().catch(() => undefined);
+            await this.tapOrClick(page.locator("#mtk_cp")).catch(
+              () => undefined,
+            );
             await page.waitForTimeout(80);
           }
-          await page.locator("#mtk_sp").click().catch(() => undefined);
+          await this.tapOrClick(page.locator("#mtk_sp")).catch(() => undefined);
         } else if (targetMode === "upper") {
           if (keyboardMode === "special") {
-            await page.locator("#mtk_sp").click().catch(() => undefined);
+            await this.tapOrClick(page.locator("#mtk_sp")).catch(
+              () => undefined,
+            );
             await page.waitForTimeout(80);
           }
-          await page.locator("#mtk_cp").click().catch(() => undefined);
+          await this.tapOrClick(page.locator("#mtk_cp")).catch(() => undefined);
         } else {
           if (keyboardMode === "special") {
-            await page.locator("#mtk_sp").click().catch(() => undefined);
+            await this.tapOrClick(page.locator("#mtk_sp")).catch(
+              () => undefined,
+            );
           } else if (keyboardMode === "upper") {
-            await page.locator("#mtk_cp").click().catch(() => undefined);
+            await this.tapOrClick(page.locator("#mtk_cp")).catch(
+              () => undefined,
+            );
           }
         }
 
@@ -2930,7 +3007,9 @@ export class ShinhanSecBroker implements BrokerAdapter {
         keyboardMode = targetMode;
       }
 
-      const keyImage = page.locator(`#mtk_userPW img[alt='${targetAlt}']`).first();
+      const keyImage = page
+        .locator(`#mtk_userPW img[alt='${targetAlt}']`)
+        .first();
       const keyCount = await keyImage.count().catch(() => 0);
 
       if (keyCount === 0) {
@@ -2939,12 +3018,48 @@ export class ShinhanSecBroker implements BrokerAdapter {
         );
       }
 
-      await keyImage.click();
+      await this.tapOrClick(keyImage);
       await page.waitForTimeout(80);
     }
 
-    await page.locator("#mtk_done").click().catch(() => undefined);
+    await this.tapOrClick(page.locator("#mtk_done")).catch(() => undefined);
     await page.waitForTimeout(150);
+  }
+
+  private async tapOrClick(locator: Locator): Promise<void> {
+    try {
+      await locator.tap();
+    } catch {
+      await locator.click();
+    }
+  }
+
+  private async waitForCredentialLoginForm(page: Page): Promise<void> {
+    const deadline = Date.now() + this.config.shinhansec.loginTimeoutMs;
+
+    while (Date.now() < deadline) {
+      if (await page.locator("#userID").isVisible().catch(() => false)) {
+        return;
+      }
+
+      const securityBlockMessage = await this.getSecurityBlockMessage(page);
+
+      if (securityBlockMessage) {
+        this.throwSecurityBlocked(securityBlockMessage);
+      }
+
+      await page.waitForTimeout(500);
+    }
+
+    const securityBlockMessage = await this.getSecurityBlockMessage(page);
+
+    if (securityBlockMessage) {
+      this.throwSecurityBlocked(securityBlockMessage);
+    }
+
+    throw new UserVisibleError(
+      "신한투자증권 로그인 입력 폼을 찾지 못했습니다. 사이트 보안 정책 또는 로그인 페이지 응답을 확인해 주세요.",
+    );
   }
 
   private async tryOpenProtectedPath(
@@ -2960,7 +3075,39 @@ export class ShinhanSecBroker implements BrokerAdapter {
       timeout: 10_000,
     }).catch(() => undefined);
 
+    if (await this.getSecurityBlockMessage(page)) {
+      return false;
+    }
+
     return !(await this.isLoginPage(page));
+  }
+
+  private async getSecurityBlockMessage(page: Page): Promise<string | undefined> {
+    const title = await page.title().catch(() => "");
+    const bodyText = await page.locator("body").innerText().catch(() => "");
+    const text = normalizeText(`${title}\n${bodyText}`);
+
+    if (!textIncludesAny(text, SECURITY_BLOCK_KEYWORDS)) {
+      return undefined;
+    }
+
+    return text.slice(0, 200);
+  }
+
+  private async throwIfSecurityBlocked(page: Page): Promise<void> {
+    const message = await this.getSecurityBlockMessage(page);
+
+    if (!message) {
+      return;
+    }
+
+    this.throwSecurityBlocked(message);
+  }
+
+  private throwSecurityBlocked(message: string): never {
+    throw new UserVisibleError(
+      `신한투자증권 보안/비정상 접근 차단 화면이 표시되었습니다. 태블릿/터치 컨텍스트 또는 사이트 보안 정책을 확인해 주세요. (${message})`,
+    );
   }
 
   private async isLoginPage(page: Page): Promise<boolean> {
