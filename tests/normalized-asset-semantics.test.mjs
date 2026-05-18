@@ -208,6 +208,111 @@ const samsungHoldingsSnapshot = {
   ],
 };
 
+const samsungShiftedRetirementHoldingsSnapshot = {
+  brokerId: 'samsungpop',
+  brokerName: 'Samsung Securities POP',
+  capturedAt: '2026-05-18T00:00:00.000Z',
+  categories: ['retirement'],
+  availableAccounts: [],
+  holdings: [],
+  totals: {
+    accountCount: 1,
+    holdingsCount: 5,
+    byCategory: { retirement: 5 },
+  },
+  accounts: [
+    {
+      account: {
+        accountNumber: '716570338328',
+        displayAccountNumber: '7165703383-28',
+        rawLabel: '',
+        rawValue: '',
+        accountType: '퇴직연금(DC)',
+        ownerName: '김민주',
+      },
+      summarySections: [],
+      holdingSummarySections: [],
+      holdings: [
+        {
+          productCategory: 'retirement',
+          primaryValues: {
+            퇴직금수량: '157',
+            개인납입금수량: '2,285,920',
+            합계수량: '2,296,910',
+            매입원금: '0.48%',
+            평가금액: '삼성증권',
+          },
+          detailValues: { 평가손익: '10,990' },
+          productName: 'TIGER 미국배당다우존스 (A458730 )',
+          quantity: '157',
+          purchaseAmount: '2,285,920',
+          evaluationAmount: '삼성증권',
+        },
+        {
+          productCategory: 'retirement',
+          primaryValues: {
+            퇴직금수량: '242',
+            개인납입금수량: '3,304,510',
+            합계수량: '3,441,240',
+            매입원금: '4.14%',
+            평가금액: '삼성증권',
+          },
+          detailValues: { 평가손익: '136,730' },
+          productName: 'TIGER 미국테크TOP10채권혼합 (A472170 )',
+          quantity: '242',
+          purchaseAmount: '3,304,510',
+          evaluationAmount: '삼성증권',
+        },
+        {
+          productCategory: 'retirement',
+          primaryValues: {
+            퇴직금수량: '127',
+            개인납입금수량: '2,436,495',
+            합계수량: '3,609,340',
+            매입원금: '48.14%',
+            평가금액: '삼성증권',
+          },
+          detailValues: { 평가손익: '1,172,845' },
+          productName: 'KODEX 200액티브 (A494890 )',
+          quantity: '127',
+          purchaseAmount: '2,436,495',
+          evaluationAmount: '삼성증권',
+        },
+        {
+          productCategory: 'retirement',
+          primaryValues: {
+            퇴직금수량: '163',
+            개인납입금수량: '2,321,935',
+            합계수량: '2,567,403',
+            매입원금: '10.74%',
+            평가금액: '삼성증권',
+          },
+          detailValues: { 평가손익: '245,468' },
+          productName: 'KODEX 미국S&P500액티브 (A0041E0 )',
+          quantity: '163',
+          purchaseAmount: '2,321,935',
+          evaluationAmount: '삼성증권',
+        },
+        {
+          productCategory: 'retirement',
+          primaryValues: {
+            퇴직금수량: '3,705',
+            개인납입금수량: '3,705',
+            합계수량: '3,705',
+            매입원금: '0.00%',
+            평가금액: '삼성증권',
+          },
+          detailValues: { 평가손익: '0' },
+          productName: '현금성자산 (대기자금)',
+          quantity: '3,705',
+          purchaseAmount: '3,705',
+          evaluationAmount: '삼성증권',
+        },
+      ],
+    },
+  ],
+};
+
 const shinhanAssetSnapshot = {
   brokerId: 'shinhansec',
   brokerName: 'Shinhan Securities',
@@ -381,6 +486,27 @@ test('samsung normalized asset summary matches holdings/composition semantics', 
   assert.equal(summary.otherNonHoldingAssetValue, 0);
   assert.equal(summary.assetCompositionSource, 'holdings_aggregated');
   assert.ok((holdings[0]?.evaluationAmountValue ?? 0) > (holdings[0]?.nativeEvaluationAmountValue ?? 0));
+});
+
+test('samsung shifted retirement columns parse evaluation and keep cash out of holdings', () => {
+  const holdings = normalizeSamsungHoldings(samsungShiftedRetirementHoldingsSnapshot);
+
+  assert.equal(holdings.length, 4);
+  assert.equal(sumEval(holdings), 11914893);
+  assert.equal(
+    holdings.reduce((sum, holding) => sum + (holding.purchaseAmountValue ?? 0), 0),
+    10348860,
+  );
+  assert.equal(
+    holdings.reduce((sum, holding) => sum + (holding.profitLossValue ?? 0), 0),
+    1566033,
+  );
+  assert.equal(holdings[0]?.evaluationAmountValue, 2296910);
+  assert.equal(holdings[0]?.returnRateValue, 0.48);
+  assert.equal(
+    holdings.some((holding) => /현금성자산/u.test(holding.productName ?? '')),
+    false,
+  );
 });
 
 test('shinhan normalized holdings are deduped and align with summary/composition', () => {

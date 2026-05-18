@@ -1410,6 +1410,15 @@ export function normalizeSamsungHoldings(
     let foreignHoldingIndex = 0;
 
     for (const holding of accountSnapshot.holdings) {
+      const isRetirementHolding = holding.productCategory === "retirement";
+      const isCashLikeRetirementHolding =
+        isRetirementHolding &&
+        /현금성자산|현금성 자산|예수금/u.test(holding.productName ?? "");
+
+      if (isCashLikeRetirementHolding) {
+        continue;
+      }
+
       const nativePurchaseAmountValue = parseLooseNumber(holding.purchaseAmount);
       const nativeEvaluationAmountValue = parseLooseNumber(holding.evaluationAmount);
       const nativeProfitLossValue = parseLooseNumber(holding.profitLoss);
@@ -1433,6 +1442,31 @@ export function normalizeSamsungHoldings(
       let evaluationAmountRaw = holding.evaluationAmount;
       let profitLossRaw = holding.profitLoss;
       let returnRateRaw = holding.returnRate;
+
+      const retirementEvaluationAmountRaw = getRecordStringValue(
+        holding.primaryValues,
+        ["합계수량"],
+      );
+      const hasShiftedRetirementColumns =
+        isRetirementHolding &&
+        nativeEvaluationAmountValue === undefined &&
+        parseLooseNumber(retirementEvaluationAmountRaw) !== undefined;
+
+      if (hasShiftedRetirementColumns) {
+        purchaseAmountRaw =
+          getRecordStringValue(holding.primaryValues, ["개인납입금수량"]) ??
+          holding.purchaseAmount;
+        evaluationAmountRaw = retirementEvaluationAmountRaw;
+        profitLossRaw =
+          getRecordStringValue(holding.detailValues, ["평가손익"]) ??
+          holding.profitLoss;
+        returnRateRaw =
+          getRecordStringValue(holding.primaryValues, ["매입원금"]) ??
+          holding.returnRate;
+        purchaseAmountValue = parseLooseNumber(purchaseAmountRaw);
+        evaluationAmountValue = parseLooseNumber(evaluationAmountRaw);
+        profitLossValue = parseLooseNumber(profitLossRaw);
+      }
 
       if (
         isForeignHolding &&

@@ -202,6 +202,102 @@ function sumBy<T>(items: T[], pick: (item: T) => number | undefined): number {
   return items.reduce((sum, item) => sum + (pick(item) ?? 0), 0);
 }
 
+function formatAmount(value: number): string {
+  return String(Math.round(value));
+}
+
+function reconcileAssetSummaryWithHoldings(
+  summary: NormalizedAssetSummary,
+  holdings: NormalizedHolding[],
+): NormalizedAssetSummary {
+  if (holdings.length === 0) {
+    return summary;
+  }
+
+  const holdingEvaluationAmountValue = sumBy(
+    holdings,
+    (item) => item.evaluationAmountValue,
+  );
+
+  if (holdingEvaluationAmountValue <= 0) {
+    return summary;
+  }
+
+  const previousEvaluationAmountValue = summary.evaluationAmountValue;
+  const normalizedEvaluationAmountValue = Math.round(holdingEvaluationAmountValue);
+  const existingEvaluationAmountValue =
+    previousEvaluationAmountValue !== undefined
+      ? Math.round(previousEvaluationAmountValue)
+      : undefined;
+  const reportedNonHoldingAssetAmountValue =
+    summary.totalAssetValue !== undefined
+      ? Math.max(
+          Math.round(summary.totalAssetValue - normalizedEvaluationAmountValue),
+          0,
+        )
+      : summary.nonHoldingAssetAmountValue;
+  const cashBalanceValue = summary.cashBalanceValue ?? 0;
+  const cashEquivalentBalanceValue = summary.cashEquivalentBalanceValue ?? 0;
+  const foreignCashBalanceValue = summary.foreignCashBalanceValue ?? 0;
+  const explicitOtherNonHoldingAssetValue = summary.otherNonHoldingAssetValue ?? 0;
+  const cashBasedNonHoldingAssetAmountValue =
+    cashBalanceValue +
+    cashEquivalentBalanceValue +
+    foreignCashBalanceValue +
+    explicitOtherNonHoldingAssetValue;
+  const nonHoldingAssetAmountValue = Math.max(
+    reportedNonHoldingAssetAmountValue ?? 0,
+    cashBasedNonHoldingAssetAmountValue,
+  );
+  const reconciledTotalAssetValue =
+    normalizedEvaluationAmountValue + nonHoldingAssetAmountValue;
+  const otherNonHoldingAssetValue = Math.max(
+    nonHoldingAssetAmountValue -
+      cashBalanceValue -
+      cashEquivalentBalanceValue -
+      foreignCashBalanceValue,
+    0,
+  );
+
+  if (
+    existingEvaluationAmountValue === normalizedEvaluationAmountValue &&
+    Math.round(summary.nonHoldingAssetAmountValue ?? 0) ===
+      nonHoldingAssetAmountValue &&
+    Math.round(summary.totalAssetValue ?? 0) === reconciledTotalAssetValue
+  ) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    ...(summary.totalAssetValue !== undefined
+      ? {
+          totalAssetRaw: formatAmount(reconciledTotalAssetValue),
+          totalAssetValue: reconciledTotalAssetValue,
+        }
+      : {}),
+    ...(previousEvaluationAmountValue !== undefined
+      ? {
+          brokerReportedEvaluationAmountRaw:
+            summary.brokerReportedEvaluationAmountRaw ??
+            summary.evaluationAmountRaw ??
+            formatAmount(previousEvaluationAmountValue),
+          brokerReportedEvaluationAmountValue:
+            summary.brokerReportedEvaluationAmountValue ??
+            previousEvaluationAmountValue,
+        }
+      : {}),
+    evaluationAmountRaw: formatAmount(normalizedEvaluationAmountValue),
+    evaluationAmountValue: normalizedEvaluationAmountValue,
+    nonHoldingAssetAmountRaw: formatAmount(nonHoldingAssetAmountValue),
+    nonHoldingAssetAmountValue,
+    otherNonHoldingAssetRaw: formatAmount(otherNonHoldingAssetValue),
+    otherNonHoldingAssetValue,
+    holdingCount: holdings.length,
+    assetCompositionSource: "holdings_aggregated",
+  };
+}
+
 function formatTransactionSortKey(transaction: NormalizedTransaction): string {
   return [
     transaction.transactionDate,
@@ -1527,7 +1623,7 @@ server.registerTool(
         ),
       ]);
 
-      const assetSummaries = assetSettled
+      const rawAssetSummaries = assetSettled
         .filter((result) => result.ok)
         .map((result) => result.summary);
       const accountResponses = accountSettled
@@ -1548,6 +1644,15 @@ server.registerTool(
         .map((result) => ({ brokerId: result.brokerId, message: result.message }));
 
       const accounts = accountResponses.flatMap((result) => result.accounts);
+      const holdingsByBroker = new Map(
+        holdingResponses.map((result) => [result.brokerId, result.holdings] as const),
+      );
+      const assetSummaries = rawAssetSummaries.map((summary) =>
+        reconcileAssetSummaryWithHoldings(
+          summary,
+          holdingsByBroker.get(summary.brokerId) ?? [],
+        ),
+      );
       const holdings = holdingResponses.flatMap((result) => result.holdings);
       const totalInvestmentAmountValue = sumBy(
         assetSummaries,
