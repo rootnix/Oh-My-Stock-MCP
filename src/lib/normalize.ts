@@ -1600,14 +1600,36 @@ export function normalizeShinhanHoldings(
       getString(holding, "currentPrice") ??
       getString(holding, "기준가") ??
       getString(holding, "basePrice");
-    const purchaseAmountRaw =
+    const explicitPurchaseAmountRaw =
       getString(holding, "purchaseAmount") ??
       getString(holding, "principal") ??
       getString(holding, "contributionAmount");
     const evaluationAmountRaw = getString(holding, "evaluationAmount");
-    const profitLossRaw = getString(holding, "profitLoss");
+    const explicitProfitLossRaw = getString(holding, "profitLoss");
     const returnRateRaw = getString(holding, "returnRate");
     const weightRaw = getString(holding, "weight");
+    const quantityValue = parseLooseNumber(quantityRaw);
+    const purchasePriceValue = parseLooseNumber(purchasePriceRaw);
+    const currentPriceValue = parseLooseNumber(currentPriceRaw);
+    const evaluationAmountValue = parseLooseNumber(evaluationAmountRaw);
+    const derivedPurchaseAmountValue =
+      explicitPurchaseAmountRaw === undefined &&
+      quantityValue !== undefined &&
+      purchasePriceValue !== undefined
+        ? Math.round(quantityValue * purchasePriceValue)
+        : undefined;
+    const purchaseAmountRaw =
+      explicitPurchaseAmountRaw ?? toRawAmount(derivedPurchaseAmountValue);
+    const purchaseAmountValue = parseLooseNumber(purchaseAmountRaw);
+    const derivedProfitLossValue =
+      explicitProfitLossRaw === undefined &&
+      evaluationAmountValue !== undefined &&
+      purchaseAmountValue !== undefined
+        ? evaluationAmountValue - purchaseAmountValue
+        : undefined;
+    const profitLossRaw =
+      explicitProfitLossRaw ?? toRawAmount(derivedProfitLossValue);
+    const profitLossValue = parseLooseNumber(profitLossRaw);
     const productName =
       getString(holding, "productName") ??
       getString(holding, "fundName");
@@ -1629,19 +1651,19 @@ export function normalizeShinhanHoldings(
       ...(market ? { market } : {}),
       ...(currency ? { currency } : {}),
       ...(quantityRaw ? { quantityRaw } : {}),
-      ...withParsedNumber("quantityValue", quantityRaw),
+      ...(quantityValue !== undefined ? { quantityValue } : {}),
       ...(orderableQuantityRaw ? { orderableQuantityRaw } : {}),
       ...withParsedNumber("orderableQuantityValue", orderableQuantityRaw),
       ...(purchasePriceRaw ? { purchasePriceRaw } : {}),
-      ...withParsedNumber("purchasePriceValue", purchasePriceRaw),
+      ...(purchasePriceValue !== undefined ? { purchasePriceValue } : {}),
       ...(currentPriceRaw ? { currentPriceRaw } : {}),
-      ...withParsedNumber("currentPriceValue", currentPriceRaw),
+      ...(currentPriceValue !== undefined ? { currentPriceValue } : {}),
       ...(purchaseAmountRaw ? { purchaseAmountRaw } : {}),
-      ...withParsedNumber("purchaseAmountValue", purchaseAmountRaw),
+      ...(purchaseAmountValue !== undefined ? { purchaseAmountValue } : {}),
       ...(evaluationAmountRaw ? { evaluationAmountRaw } : {}),
-      ...withParsedNumber("evaluationAmountValue", evaluationAmountRaw),
+      ...(evaluationAmountValue !== undefined ? { evaluationAmountValue } : {}),
       ...(profitLossRaw ? { profitLossRaw } : {}),
-      ...withParsedNumber("profitLossValue", profitLossRaw),
+      ...(profitLossValue !== undefined ? { profitLossValue } : {}),
       ...(returnRateRaw ? { returnRateRaw } : {}),
       ...withParsedNumber("returnRateValue", returnRateRaw),
       ...(weightRaw ? { weightRaw } : {}),

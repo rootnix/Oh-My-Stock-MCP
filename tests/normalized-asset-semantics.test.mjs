@@ -468,8 +468,14 @@ const shinhanHoldingsSnapshot = {
   ],
 };
 
-const sumEval = (holdings) => holdings.reduce((sum, holding) => sum + (holding.evaluationAmountValue ?? 0), 0);
-const sumComposition = (items) => items.reduce((sum, item) => sum + (item.evaluationAmountValue ?? 0), 0);
+const sumEval = (holdings) =>
+  holdings.reduce((sum, holding) => sum + (holding.evaluationAmountValue ?? 0), 0);
+const sumPurchase = (holdings) =>
+  holdings.reduce((sum, holding) => sum + (holding.purchaseAmountValue ?? 0), 0);
+const sumProfitLoss = (holdings) =>
+  holdings.reduce((sum, holding) => sum + (holding.profitLossValue ?? 0), 0);
+const sumComposition = (items) =>
+  items.reduce((sum, item) => sum + (item.evaluationAmountValue ?? 0), 0);
 
 test('samsung normalized asset summary matches holdings/composition semantics', () => {
   const summary = normalizeSamsungAssetSummary(samsungAssetSnapshot);
@@ -478,8 +484,15 @@ test('samsung normalized asset summary matches holdings/composition semantics', 
 
   assert.equal(summary.evaluationAmountValue, 33880383);
   assert.equal(sumEval(holdings), summary.evaluationAmountValue);
+  assert.equal(
+    sumPurchase(holdings) + sumProfitLoss(holdings),
+    sumEval(holdings),
+  );
   assert.equal(sumComposition(composition), summary.evaluationAmountValue);
-  assert.equal(summary.totalAssetValue, summary.evaluationAmountValue + summary.nonHoldingAssetAmountValue);
+  assert.equal(
+    summary.totalAssetValue,
+    summary.evaluationAmountValue + summary.nonHoldingAssetAmountValue,
+  );
   assert.equal(summary.cashBalanceValue, 8414);
   assert.equal(summary.cashEquivalentBalanceValue, 3705);
   assert.equal(summary.foreignCashBalanceValue, 11803703);
@@ -517,11 +530,26 @@ test('shinhan normalized holdings are deduped and align with summary/composition
   assert.equal(holdings.length, 4);
   assert.equal(summary.evaluationAmountValue, 10088817);
   assert.equal(sumEval(holdings), summary.evaluationAmountValue);
+  assert.equal(sumPurchase(holdings), 8052583);
+  assert.equal(sumProfitLoss(holdings), 2036234);
+  assert.equal(
+    sumPurchase(holdings) + sumProfitLoss(holdings),
+    sumEval(holdings),
+  );
   assert.equal(sumComposition(composition), summary.evaluationAmountValue);
-  assert.equal(summary.totalAssetValue, summary.evaluationAmountValue + summary.nonHoldingAssetAmountValue);
+  assert.equal(
+    summary.totalAssetValue,
+    summary.evaluationAmountValue + summary.nonHoldingAssetAmountValue,
+  );
   assert.equal(summary.cashBalanceValue, 5056);
   assert.equal(summary.otherNonHoldingAssetValue, 0);
   assert.equal(summary.assetCompositionSource, 'holdings_aggregated');
-  assert.equal(holdings.filter((holding) => holding.category === 'financial_product').length, 0);
-  assert.equal(holdings.filter((holding) => holding.category === 'retirement').length, 0);
+  assert.equal(
+    holdings.filter((holding) => holding.category === 'financial_product').length,
+    0,
+  );
+  assert.equal(
+    holdings.filter((holding) => holding.category === 'retirement').length,
+    0,
+  );
 });

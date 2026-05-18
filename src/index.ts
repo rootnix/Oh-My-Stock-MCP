@@ -224,7 +224,44 @@ function reconcileAssetSummaryWithHoldings(
   }
 
   const previousEvaluationAmountValue = summary.evaluationAmountValue;
+  const holdingInvestmentAmountValue = sumBy(
+    holdings,
+    (item) => item.purchaseAmountValue,
+  );
+  const holdingProfitLossValue = sumBy(holdings, (item) => item.profitLossValue);
+  const hasHoldingInvestmentAmount = holdings.some(
+    (item) => item.purchaseAmountValue !== undefined,
+  );
+  const hasHoldingProfitLoss = holdings.some(
+    (item) => item.profitLossValue !== undefined,
+  );
   const normalizedEvaluationAmountValue = Math.round(holdingEvaluationAmountValue);
+  const normalizedInvestmentAmountValue = hasHoldingInvestmentAmount
+    ? Math.round(holdingInvestmentAmountValue)
+    : summary.investmentAmountValue;
+  const normalizedProfitLossValue = hasHoldingProfitLoss
+    ? Math.round(holdingProfitLossValue)
+    : normalizedInvestmentAmountValue !== undefined
+      ? normalizedEvaluationAmountValue - normalizedInvestmentAmountValue
+      : summary.profitLossValue;
+  const normalizedReturnRateValue =
+    normalizedInvestmentAmountValue !== undefined &&
+    normalizedInvestmentAmountValue > 0 &&
+    normalizedProfitLossValue !== undefined
+      ? Number(
+          ((normalizedProfitLossValue / normalizedInvestmentAmountValue) * 100).toFixed(
+            2,
+          ),
+        )
+      : summary.returnRateValue;
+  const existingInvestmentAmountValue =
+    summary.investmentAmountValue !== undefined
+      ? Math.round(summary.investmentAmountValue)
+      : undefined;
+  const existingProfitLossValue =
+    summary.profitLossValue !== undefined
+      ? Math.round(summary.profitLossValue)
+      : undefined;
   const existingEvaluationAmountValue =
     previousEvaluationAmountValue !== undefined
       ? Math.round(previousEvaluationAmountValue)
@@ -261,6 +298,8 @@ function reconcileAssetSummaryWithHoldings(
 
   if (
     existingEvaluationAmountValue === normalizedEvaluationAmountValue &&
+    existingInvestmentAmountValue === normalizedInvestmentAmountValue &&
+    existingProfitLossValue === normalizedProfitLossValue &&
     Math.round(summary.nonHoldingAssetAmountValue ?? 0) ===
       nonHoldingAssetAmountValue &&
     Math.round(summary.totalAssetValue ?? 0) === reconciledTotalAssetValue
@@ -287,8 +326,26 @@ function reconcileAssetSummaryWithHoldings(
             previousEvaluationAmountValue,
         }
       : {}),
+    ...(normalizedInvestmentAmountValue !== undefined
+      ? {
+          investmentAmountRaw: formatAmount(normalizedInvestmentAmountValue),
+          investmentAmountValue: normalizedInvestmentAmountValue,
+        }
+      : {}),
     evaluationAmountRaw: formatAmount(normalizedEvaluationAmountValue),
     evaluationAmountValue: normalizedEvaluationAmountValue,
+    ...(normalizedProfitLossValue !== undefined
+      ? {
+          profitLossRaw: formatAmount(normalizedProfitLossValue),
+          profitLossValue: normalizedProfitLossValue,
+        }
+      : {}),
+    ...(normalizedReturnRateValue !== undefined
+      ? {
+          returnRateRaw: String(normalizedReturnRateValue),
+          returnRateValue: normalizedReturnRateValue,
+        }
+      : {}),
     nonHoldingAssetAmountRaw: formatAmount(nonHoldingAssetAmountValue),
     nonHoldingAssetAmountValue,
     otherNonHoldingAssetRaw: formatAmount(otherNonHoldingAssetValue),
