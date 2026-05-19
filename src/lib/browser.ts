@@ -1,6 +1,11 @@
 import { access } from "node:fs/promises";
 
-import { chromium, type Browser, type BrowserContext } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type BrowserContextOptions,
+} from "playwright";
 
 import type { AppConfig } from "../config.js";
 
@@ -8,6 +13,16 @@ export type BrowserSession = {
   browser: Browser;
   context: BrowserContext;
   close: () => Promise<void>;
+};
+
+export type CreateBrowserSessionOptions = {
+  headless?: boolean;
+  storageStatePath?: string;
+  userAgent?: string;
+  viewport?: BrowserContextOptions["viewport"];
+  hasTouch?: boolean;
+  isMobile?: boolean;
+  deviceScaleFactor?: number;
 };
 
 async function fileExists(filePath: string | undefined): Promise<boolean> {
@@ -25,10 +40,7 @@ async function fileExists(filePath: string | undefined): Promise<boolean> {
 
 export async function createBrowserSession(
   config: AppConfig,
-  options: {
-    headless?: boolean;
-    storageStatePath?: string;
-  } = {},
+  options: CreateBrowserSessionOptions = {},
 ): Promise<BrowserSession> {
   const launchOptions = {
     headless: options.headless ?? config.browser.headless,
@@ -42,15 +54,28 @@ export async function createBrowserSession(
   const browser = await chromium.launch(launchOptions);
 
   const hasStorageState = await fileExists(options.storageStatePath);
-  const contextOptions = {
+  const viewport =
+    options.viewport === undefined
+      ? {
+          width: 1440,
+          height: 1200,
+        }
+      : options.viewport;
+  const contextOptions: BrowserContextOptions = {
     locale: "ko-KR",
     timezoneId: config.browser.timezoneId,
-    viewport: {
-      width: 1440,
-      height: 1200,
-    },
-    ...(hasStorageState ? { storageState: options.storageStatePath } : {}),
+    viewport,
+    ...(options.userAgent ? { userAgent: options.userAgent } : {}),
+    ...(options.hasTouch !== undefined ? { hasTouch: options.hasTouch } : {}),
+    ...(options.isMobile !== undefined ? { isMobile: options.isMobile } : {}),
+    ...(options.deviceScaleFactor !== undefined
+      ? { deviceScaleFactor: options.deviceScaleFactor }
+      : {}),
   };
+
+  if (hasStorageState && options.storageStatePath) {
+    contextOptions.storageState = options.storageStatePath;
+  }
 
   const context = await browser.newContext(contextOptions);
 
